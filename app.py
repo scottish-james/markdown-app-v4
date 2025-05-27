@@ -71,7 +71,9 @@ def handle_file_upload(enhance_markdown, openai_api_key):
         all_extensions.extend(info["extensions"])
 
     st.info(
-        "Special feature: PDF and PowerPoint files will have their hyperlinks extracted and included in the markdown output."
+        "Special feature: PDF and PowerPoint files will have their hyperlinks extracted and included in the markdown "
+        "output. However this does not work great for PDF so please avoid where possible and use oringal documents. "
+        "WORD documents work best"
     )
 
     uploaded_file = st.file_uploader(

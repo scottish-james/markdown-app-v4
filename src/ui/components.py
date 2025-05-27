@@ -161,7 +161,7 @@ def create_file_uploader(file_types, help_text="Choose a file to convert"):
         uploaded_file: The uploaded file object
     """
     return st.file_uploader(
-        "Select a file to convert",
+        "Select a file to convert - if possible do not use PDF",
         type=file_types,
         help=help_text
     )
