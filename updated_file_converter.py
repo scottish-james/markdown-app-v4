@@ -60,11 +60,11 @@ def convert_file_to_markdown(file_data, filename, enhance=True, api_key=None):
     """
     try:
         ext = get_file_extension(filename)
-
+        
         # Use enhanced processing for PowerPoint files
         if ext.lower() in ["pptx", "ppt"]:
             return convert_pptx_enhanced(file_data, filename, enhance, api_key)
-
+        
         # Use standard MarkItDown for other file types
         return convert_standard_markitdown(file_data, filename, enhance, api_key)
 
@@ -79,16 +79,21 @@ def convert_pptx_enhanced(file_data, filename, enhance=True, api_key=None):
     try:
         import tempfile
         from src.converters.enhanced_pptx_processor import convert_pptx_to_markdown_enhanced
-
+        
         # Create temporary file for processing
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{get_file_extension(filename)}") as tmp_file:
             tmp_file.write(file_data)
             tmp_file_path = tmp_file.name
 
         try:
-            # Use enhanced PowerPoint processor (includes inline hyperlinks)
+            # Use enhanced PowerPoint processor
             markdown_content = convert_pptx_to_markdown_enhanced(tmp_file_path)
-
+            
+            # Extract and append hyperlinks
+            hyperlinks = extract_pptx_hyperlinks(tmp_file_path)
+            if hyperlinks:
+                markdown_content += format_hyperlinks_section(hyperlinks, "Presentation")
+            
         finally:
             # Clean up temporary file
             os.unlink(tmp_file_path)
@@ -102,7 +107,7 @@ def convert_pptx_enhanced(file_data, filename, enhance=True, api_key=None):
                 markdown_content = enhanced_content
 
         return markdown_content, None
-
+        
     except Exception as e:
         return "", str(e)
 
