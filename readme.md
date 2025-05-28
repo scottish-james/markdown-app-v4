@@ -258,15 +258,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 4. **Batch Processing**: Use folder processing for converting multiple documents efficiently
 5. **Quality Review**: Always review converted content for formatting accuracy
 
-## 📞 Support
-
-If you encounter any issues or have questions:
-
-1. **Check the Issues**: Search existing GitHub issues
-2. **Create an Issue**: Open a new issue with detailed information
-3. **Documentation**: Review this README and code comments
-4. **Tests**: Run the test suite to verify your environment
-
 ## 🙏 Acknowledgments
 
 - **MarkItDown**: Core conversion engine
