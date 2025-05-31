@@ -60,3 +60,24 @@ MARKDOWN_ENHANCEMENT_PROMPT = """You are a markdown formatting expert. Your task
 8. Preserve all links and references
 
 Return ONLY the enhanced markdown content without any explanations or additional text."""
+
+# Claude API Configuration
+CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MAX_TOKENS = 4096
+CLAUDE_TEMPERATURE = 0.1  # Low temperature for consistent formatting
+
+# API Settings
+DEFAULT_TIMEOUT = 30  # seconds
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
+
+# Content Processing Settings
+MAX_CONTENT_LENGTH = 100000  # Maximum characters to send to Claude
+CHUNK_SIZE = 50000  # If content is too large, process in chunks
+
+# Enhanced settings for your existing config.py
+CLAUDE_ENHANCEMENT_ENABLED = True
+USE_CLAUDE_FOR_ENHANCEMENT = True  # Set to True to use Claude instead of OpenAI
+
+# You can add this to your existing config.py file
+ANTHROPIC_API_KEY_ENV_VAR = "YOUR API KEY"

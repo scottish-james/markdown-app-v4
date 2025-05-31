@@ -64,3 +64,22 @@ typing_extensions==4.13.2
 tzdata==2025.2
 urllib3==2.4.0
 XlsxWriter==3.2.3
+# Core Anthropic SDK
+anthropic==0.40.0
+
+# Optional: Enhanced Streamlit components (for better UI)
+streamlit-extras==0.4.7
+
+# Optional: For better clipboard functionality
+pyperclip==1.9.0
+
+# If you want to add async support for batch processing
+aiohttp==3.10.11
+asyncio-throttle==1.0.2
+
+# For better error handling and logging
+loguru==0.7.2
+
+# Updated versions (if needed)
+streamlit>=1.45.1
+requests>=2.32.3
