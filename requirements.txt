@@ -1,71 +1,101 @@
+# Core Dependencies for PowerPoint to Markdown Converter
+# Optimized for Claude Sonnet 4 processing
+
+# Streamlit for web interface
+streamlit>=1.45.1
 altair==5.5.0
-annotated-types==0.7.0
-anyio==4.9.0
-attrs==25.3.0
-beautifulsoup4==4.13.4
 blinker==1.9.0
 cachetools==5.5.2
-certifi==2025.4.26
-charset-normalizer==3.4.2
-click==8.2.1
-coloredlogs==15.0.1
-distro==1.9.0
-exceptiongroup==1.3.0
-flatbuffers==25.2.10
 gitdb==4.0.12
 GitPython==3.1.44
-h11==0.16.0
-httpcore==1.0.9
-httpx==0.28.1
-humanfriendly==10.0
-idna==3.10
-Jinja2==3.1.6
-jiter==0.10.0
-jsonschema==4.23.0
-jsonschema-specifications==2025.4.1
-lxml==5.4.0
-magika==0.6.2
-markdownify==1.1.0
-markitdown==0.1.1
-MarkupSafe==3.0.2
-mpmath==1.3.0
 narwhals==1.40.0
-numpy==2.2.6
-onnxruntime==1.22.0
-openai==1.80.0
-packaging==24.2
-pandas==2.2.3
-pillow==11.2.1
 protobuf==6.31.0
 pyarrow==20.0.0
+pydeck==0.9.1
+tornado==6.5
+tzdata==2025.2
+
+# Core Anthropic SDK for Claude Sonnet 4
+anthropic==0.40.0
+
+# Document processing and conversion
+markitdown==0.1.1
+python-pptx==1.0.2
+PyMuPDF==1.25.5
+markdownify==1.1.0
+
+# File processing and utilities
+beautifulsoup4==4.13.4
+lxml==5.4.0
+pillow==11.2.1
+pandas==2.2.3
+numpy==2.2.6
+XlsxWriter==3.2.3
+
+# HTTP and networking
+requests==2.32.3
+urllib3==2.4.0
+certifi==2025.4.26
+charset-normalizer==3.4.2
+idna==3.10
+httpx==0.28.1
+httpcore==1.0.9
+h11==0.16.0
+anyio==4.9.0
+sniffio==1.3.1
+
+# JSON and data handling
+jsonschema==4.23.0
+jsonschema-specifications==2025.4.1
+jiter==0.10.0
+
+# Text and template processing
+Jinja2==3.1.6
+MarkupSafe==3.0.2
+soupsieve==2.7
+
+# System utilities
+click==8.2.1
+packaging==24.2
+python-dateutil==2.9.0.post0
+pytz==2025.2
+six==1.17.0
+toml==0.10.2
+tqdm==4.67.1
+
+# Type checking and validation
+annotated-types==0.7.0
 pydantic==2.11.4
 pydantic_core==2.33.2
-pydeck==0.9.1
-PyMuPDF==1.25.5
-python-dateutil==2.9.0.post0
-python-dotenv==1.1.0
-python-pptx==1.0.2
-pytz==2025.2
-referencing==0.36.2
-requests==2.32.3
-rpds-py==0.25.1
-six==1.17.0
-smmap==5.0.2
-sniffio==1.3.1
-soupsieve==2.7
-streamlit==1.45.1
-sympy==1.14.0
-tenacity==9.1.2
-toml==0.10.2
-tornado==6.5
-tqdm==4.67.1
-typing-inspection==0.4.0
 typing_extensions==4.13.2
-tzdata==2025.2
-urllib3==2.4.0
-XlsxWriter==3.2.3
-# Core Anthropic SDK
-anthropic==0.40.0
+typing-inspection==0.4.0
+
+# Reference processing
+referencing==0.36.2
+rpds-py==0.25.1
+
+# Configuration and environment
+python-dotenv==1.1.0
+
+# Error handling and logging
+attrs==25.3.0
+exceptiongroup==1.3.0
+loguru==0.7.2
+
+# Math and computation
+mpmath==1.3.0
+sympy==1.14.0
+
+# AI and ML support (for magika file type detection)
+magika==0.6.2
+flatbuffers==25.2.10
+onnxruntime==1.22.0
+
+# Advanced processing
+tenacity==9.1.2
+distro==1.9.0
+coloredlogs==15.0.1
+humanfriendly==10.0
 
 # Optional: Enhanced Streamlit components (for better UI)
 streamlit-extras==0.4.7
@@ -73,13 +103,9 @@ streamlit-extras==0.4.7
 # Optional: For better clipboard functionality
 pyperclip==1.9.0
 
-# If you want to add async support for batch processing
+# Optional: For async support in batch processing
 aiohttp==3.10.11
 asyncio-throttle==1.0.2
 
-# For better error handling and logging
-loguru==0.7.2
-
-# Updated versions (if needed)
-streamlit>=1.45.1
-requests>=2.32.3
+# Note: OpenAI package removed as this application is Claude-focused
+# Note: Website/URL processing dependencies minimized as web functionality removed
