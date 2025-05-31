@@ -1,46 +1,189 @@
 """
-Enhanced PowerPoint Processor Module with Improved Nested Bullet Support
-
-This module provides PowerPoint processing that preserves formatting, detects hierarchy,
-extracts images, tables, and all shape content with improved nested bullet point handling.
+Simplified PowerPoint Processor - Extract content and let Claude handle formatting
 """
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
-from collections import defaultdict
-from pptx.enum.text import PP_PARAGRAPH_ALIGNMENT
+import json
 import re
 
 
 def convert_pptx_to_markdown_enhanced(file_path):
     """
-    Convert a PowerPoint file to markdown with comprehensive feature extraction.
+    Convert PowerPoint to structured data, then to markdown with embedded metadata
     """
     try:
         prs = Presentation(file_path)
-        all_content = []
 
-        # Process each slide
-        for slide_idx, slide in enumerate(prs.slides, 1):
-            slide_content = extract_slide_content(slide, slide_idx)
-            if slide_content.strip():
-                all_content.append(slide_content)
+        # Extract PowerPoint metadata first
+        pptx_metadata = extract_pptx_metadata(prs, file_path)
 
-        # Join slides with separators
-        return "\n\n".join(all_content)
+        # Extract structured data
+        structured_data = extract_presentation_data(prs)
 
+        # Convert to basic markdown
+        markdown = convert_structured_data_to_markdown(structured_data)
+
+        # Add PowerPoint metadata as comments for Claude to use
+        markdown_with_metadata = add_pptx_metadata_for_claude(markdown, pptx_metadata)
+
+        return markdown_with_metadata
     except Exception as e:
         raise Exception(f"Error processing PowerPoint file: {str(e)}")
 
 
-def extract_slide_content(slide, slide_number):
-    """Extract all content from a slide including text, images, tables, and shapes."""
-    content_parts = []
+def extract_pptx_metadata(presentation, file_path):
+    """Extract metadata from PowerPoint file"""
+    import os
+    from datetime import datetime
 
-    # Add slide separator comment
-    content_parts.append(f"<!-- Slide number: {slide_number} -->")
+    metadata = {}
 
-    # Collect all shapes with their positions for reading order
+    try:
+        # Core properties from PowerPoint
+        core_props = presentation.core_properties
+
+        # Basic file info
+        metadata['filename'] = os.path.basename(file_path)
+        metadata['file_size'] = os.path.getsize(file_path) if os.path.exists(file_path) else None
+
+        # Document properties
+        metadata['title'] = getattr(core_props, 'title', '') or ''
+        metadata['author'] = getattr(core_props, 'author', '') or ''
+        metadata['subject'] = getattr(core_props, 'subject', '') or ''
+        metadata['keywords'] = getattr(core_props, 'keywords', '') or ''
+        metadata['comments'] = getattr(core_props, 'comments', '') or ''
+        metadata['category'] = getattr(core_props, 'category', '') or ''
+        metadata['content_status'] = getattr(core_props, 'content_status', '') or ''
+        metadata['language'] = getattr(core_props, 'language', '') or ''
+        metadata['version'] = getattr(core_props, 'version', '') or ''
+
+        # Dates
+        metadata['created'] = getattr(core_props, 'created', None)
+        metadata['modified'] = getattr(core_props, 'modified', None)
+        metadata['last_modified_by'] = getattr(core_props, 'last_modified_by', '') or ''
+        metadata['last_printed'] = getattr(core_props, 'last_printed', None)
+
+        # Revision and identifier
+        metadata['revision'] = getattr(core_props, 'revision', None)
+        metadata['identifier'] = getattr(core_props, 'identifier', '') or ''
+
+        # Presentation-specific info
+        metadata['slide_count'] = len(presentation.slides)
+
+        # Try to get slide size
+        try:
+            slide_width = presentation.slide_width
+            slide_height = presentation.slide_height
+            # Convert from EMUs to inches (914400 EMUs = 1 inch)
+            width_inches = round(slide_width / 914400, 2)
+            height_inches = round(slide_height / 914400, 2)
+            metadata['slide_size'] = f"{width_inches}\" x {height_inches}\""
+        except:
+            metadata['slide_size'] = ''
+
+        # Try to extract slide master themes/layouts
+        try:
+            slide_masters = presentation.slide_masters
+            if slide_masters:
+                metadata['slide_master_count'] = len(slide_masters)
+                # Get layout names if available
+                layout_names = []
+                for master in slide_masters:
+                    for layout in master.slide_layouts:
+                        if hasattr(layout, 'name') and layout.name:
+                            layout_names.append(layout.name)
+                metadata['layout_types'] = ', '.join(set(layout_names)) if layout_names else ''
+        except:
+            metadata['slide_master_count'] = 0
+            metadata['layout_types'] = ''
+
+        # Application that created the file
+        try:
+            app_props = presentation.app_properties if hasattr(presentation, 'app_properties') else None
+            if app_props:
+                metadata['application'] = getattr(app_props, 'application', '') or ''
+                metadata['app_version'] = getattr(app_props, 'app_version', '') or ''
+                metadata['company'] = getattr(app_props, 'company', '') or ''
+                metadata['doc_security'] = getattr(app_props, 'doc_security', None)
+        except:
+            metadata['application'] = ''
+            metadata['app_version'] = ''
+            metadata['company'] = ''
+            metadata['doc_security'] = None
+
+    except Exception as e:
+        print(f"Warning: Could not extract some metadata: {e}")
+
+    return metadata
+
+
+def add_pptx_metadata_for_claude(markdown_content, metadata):
+    """Add PowerPoint metadata as comments for Claude to incorporate"""
+
+    # Format metadata for Claude
+    metadata_comments = "\n<!-- POWERPOINT METADATA FOR CLAUDE:\n"
+
+    if metadata.get('title'):
+        metadata_comments += f"Document Title: {metadata['title']}\n"
+    if metadata.get('author'):
+        metadata_comments += f"Author: {metadata['author']}\n"
+    if metadata.get('subject'):
+        metadata_comments += f"Subject: {metadata['subject']}\n"
+    if metadata.get('keywords'):
+        metadata_comments += f"Keywords: {metadata['keywords']}\n"
+    if metadata.get('category'):
+        metadata_comments += f"Category: {metadata['category']}\n"
+    if metadata.get('comments'):
+        metadata_comments += f"Document Comments: {metadata['comments']}\n"
+    if metadata.get('created'):
+        metadata_comments += f"Created Date: {metadata['created']}\n"
+    if metadata.get('modified'):
+        metadata_comments += f"Last Modified: {metadata['modified']}\n"
+    if metadata.get('last_modified_by'):
+        metadata_comments += f"Last Modified By: {metadata['last_modified_by']}\n"
+    if metadata.get('version'):
+        metadata_comments += f"Version: {metadata['version']}\n"
+    if metadata.get('application'):
+        metadata_comments += f"Created With: {metadata['application']}\n"
+    if metadata.get('company'):
+        metadata_comments += f"Company: {metadata['company']}\n"
+    if metadata.get('language'):
+        metadata_comments += f"Language: {metadata['language']}\n"
+    if metadata.get('content_status'):
+        metadata_comments += f"Content Status: {metadata['content_status']}\n"
+
+    # File info
+    metadata_comments += f"Filename: {metadata.get('filename', 'unknown')}\n"
+    metadata_comments += f"Slide Count: {metadata.get('slide_count', 0)}\n"
+    if metadata.get('slide_size'):
+        metadata_comments += f"Slide Size: {metadata['slide_size']}\n"
+    if metadata.get('layout_types'):
+        metadata_comments += f"Layout Types: {metadata['layout_types']}\n"
+
+    metadata_comments += "-->\n"
+
+    # Add metadata at the beginning
+    return metadata_comments + markdown_content
+
+
+def extract_presentation_data(presentation):
+    """Extract all content with minimal processing"""
+    data = {
+        "total_slides": len(presentation.slides),
+        "slides": []
+    }
+
+    for slide_idx, slide in enumerate(presentation.slides, 1):
+        slide_data = extract_slide_data(slide, slide_idx)
+        data["slides"].append(slide_data)
+
+    return data
+
+
+def extract_slide_data(slide, slide_number):
+    """Extract slide content in reading order"""
+    # Get shapes in reading order (keep your good logic here)
     positioned_shapes = []
     for shape in slide.shapes:
         if hasattr(shape, 'top') and hasattr(shape, 'left'):
@@ -48,579 +191,422 @@ def extract_slide_content(slide, slide_number):
         else:
             positioned_shapes.append((0, 0, shape))
 
-    # Sort by top position, then left position for proper reading order
     positioned_shapes.sort(key=lambda x: (x[0], x[1]))
 
-    # Process shapes in reading order
-    for _, _, shape in positioned_shapes:
-        shape_content = extract_shape_content(shape)
-        if shape_content.strip():
-            content_parts.append(shape_content)
-
-    return "\n\n".join(content_parts)
-
-
-def extract_shape_content(shape):
-    """Extract content from any type of shape, including hyperlinks."""
-    try:
-        # Handle different shape types
-        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-            return extract_image_content(shape)
-        elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
-            return extract_table_content(shape.table)
-        elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-            return extract_group_content(shape)
-        elif hasattr(shape, 'text_frame') and shape.text_frame:
-            # Get text content with inline hyperlinks and enhanced bullet handling
-            text_content = extract_text_frame_content_enhanced(shape.text_frame, get_shape_context(shape))
-
-            # Also check for shape-level hyperlinks (click actions)
-            shape_hyperlink = extract_shape_hyperlink(shape)
-            if shape_hyperlink and text_content.strip():
-                # If the entire shape is a hyperlink, wrap the content
-                return f"[{text_content}]({shape_hyperlink})"
-
-            return text_content
-        elif hasattr(shape, 'text') and shape.text:
-            text_content = clean_text(shape.text)
-
-            # Check for shape-level hyperlinks
-            shape_hyperlink = extract_shape_hyperlink(shape)
-            if shape_hyperlink and text_content.strip():
-                return f"[{text_content}]({shape_hyperlink})"
-
-            return text_content
-        else:
-            # Try to extract any text content from unknown shape types
-            try:
-                if hasattr(shape, 'text') and shape.text:
-                    text_content = clean_text(shape.text)
-                    shape_hyperlink = extract_shape_hyperlink(shape)
-                    if shape_hyperlink and text_content.strip():
-                        return f"[{text_content}]({shape_hyperlink})"
-                    return text_content
-            except:
-                pass
-    except:
-        pass
-
-    return ""
-
-
-def extract_text_frame_content_enhanced(text_frame, context="unknown"):
-    """Enhanced version using robust bullet detection for content placeholders."""
-    if not text_frame or not text_frame.paragraphs:
-        return ""
-
-    # Use robust processing for content placeholders
-    if context in ["content", "unknown"]:
-        return process_content_placeholder_enhanced(text_frame, context)
-    else:
-        # Use simpler processing for titles and other contexts
-        paragraphs = []
-        for para_idx, paragraph in enumerate(text_frame.paragraphs):
-            if not paragraph.text.strip():
-                continue
-
-            para_content = extract_paragraph_content_enhanced(
-                paragraph, context, para_idx, text_frame.paragraphs
-            )
-
-            if para_content.strip():
-                paragraphs.append(para_content)
-
-        return "\n".join(paragraphs)
-
-
-def extract_paragraph_content_enhanced(paragraph, context="unknown", para_idx=0, all_paragraphs=None):
-    """Enhanced paragraph processing with better nested bullet detection."""
-    if not paragraph.runs:
-        return ""
-
-    raw_text = paragraph.text.strip()
-    if not raw_text:
-        return ""
-
-    # Get bullet level using multiple detection methods
-    bullet_level = detect_bullet_level_enhanced(paragraph, raw_text)
-
-    if bullet_level >= 0:
-        return format_bullet_item_enhanced(paragraph, bullet_level)
-
-    # Check for numbered lists
-    if is_numbered_list_enhanced(paragraph):
-        return format_numbered_item_enhanced(paragraph)
-
-    # Extract formatted text with inline formatting
-    formatted_text = extract_formatted_text(paragraph.runs)
-    if not formatted_text.strip():
-        return ""
-
-    # Apply hierarchy formatting for non-list content
-    return apply_hierarchy_formatting(formatted_text, paragraph, context)
-
-
-def detect_bullet_level_enhanced(paragraph, raw_text):
-    """Enhanced bullet level detection using multiple methods."""
-
-    # Method 1: Use PowerPoint's native level property
-    level = get_powerpoint_bullet_level(paragraph)
-    if level >= 0:
-        return level
-
-    # Method 2: Detect from XML bullet formatting
-    xml_level = get_xml_bullet_level(paragraph)
-    if xml_level >= 0:
-        return xml_level
-
-    # Method 3: Detect from indentation and bullet characters
-    indent_level = get_indentation_bullet_level(paragraph, raw_text)
-    if indent_level >= 0:
-        return indent_level
-
-    # Method 4: Detect from manual bullet characters
-    char_level = get_character_bullet_level(raw_text)
-    if char_level >= 0:
-        return char_level
-
-    return -1  # Not a bullet point
-
-
-def get_powerpoint_bullet_level(paragraph):
-    """Get bullet level from PowerPoint's native properties."""
-    try:
-        # Check if paragraph has a defined level
-        if hasattr(paragraph, 'level') and paragraph.level is not None:
-            # Verify it's actually a bullet by checking for bullet formatting
-            if has_bullet_formatting(paragraph):
-                return paragraph.level
-
-        # Some paragraphs might have bullet formatting but no explicit level
-        if has_bullet_formatting(paragraph):
-            return 0  # Default to level 0 if we know it's a bullet
-
-    except Exception:
-        pass
-
-    return -1
-
-
-def has_bullet_formatting(paragraph):
-    """Check if paragraph has actual bullet formatting."""
-    try:
-        # Method 1: Check XML for bullet indicators
-        if hasattr(paragraph, '_p') and paragraph._p is not None:
-            xml_str = str(paragraph._p.xml) if hasattr(paragraph._p, 'xml') else ""
-            bullet_indicators = ['buChar', 'buAutoNum', 'buFont', 'buNone="0"']
-            if any(indicator in xml_str for indicator in bullet_indicators):
-                return True
-
-        # Method 2: Check paragraph properties
-        if hasattr(paragraph, '_element'):
-            # Look for bullet-related elements in the paragraph properties
-            pPr = getattr(paragraph._element, 'pPr', None)
-            if pPr is not None:
-                # Check for bullet number or character properties
-                for child in pPr:
-                    tag_name = getattr(child, 'tag', '').lower()
-                    if any(bullet in tag_name for bullet in ['buchar', 'buautonum', 'bufont']):
-                        return True
-
-    except Exception:
-        pass
-
-    return False
-
-
-def get_xml_bullet_level(paragraph):
-    """Extract bullet level from XML properties."""
-    try:
-        if hasattr(paragraph, '_element') and paragraph._element is not None:
-            # Look for level indicators in XML
-            pPr = getattr(paragraph._element, 'pPr', None)
-            if pPr is not None:
-                for child in pPr:
-                    # Check for level attribute
-                    if hasattr(child, 'attrib') and 'lvl' in child.attrib:
-                        level = int(child.attrib['lvl'])
-                        if has_bullet_formatting(paragraph):
-                            return level
-
-                    # Check for margin-based level detection
-                    if hasattr(child, 'attrib') and 'marL' in child.attrib:
-                        margin = int(child.attrib.get('marL', 0))
-                        if margin > 0 and has_bullet_formatting(paragraph):
-                            # Convert margin to level (rough estimation)
-                            return margin // 360000  # PowerPoint units conversion
-
-    except Exception:
-        pass
-
-    return -1
-
-
-def get_indentation_bullet_level(paragraph, raw_text):
-    """Detect bullet level from text indentation patterns."""
-    try:
-        # Get the original text with leading spaces
-        original_text = paragraph.text
-        leading_spaces = len(original_text) - len(original_text.lstrip(' '))
-
-        # Check if text has bullet-like characteristics
-        if has_bullet_like_text(raw_text):
-            if leading_spaces == 0:
-                return 0
-            else:
-                # Estimate level from indentation (assuming 2-4 spaces per level)
-                return min(leading_spaces // 2, 5)  # Cap at 5 levels
-
-    except Exception:
-        pass
-
-    return -1
-
-
-def get_character_bullet_level(raw_text):
-    """Detect bullet level from bullet characters in text."""
-    bullet_chars = {
-        '•': 0,  # Primary bullet
-        '◦': 1,  # Secondary bullet
-        '▪': 1,  # Secondary bullet
-        '▫': 2,  # Tertiary bullet
-        '‣': 1,  # Secondary bullet
-        '·': 1,  # Secondary bullet
-        '-': 0,  # Primary bullet (dash)
-        '*': 0,  # Primary bullet (asterisk)
+    slide_data = {
+        "slide_number": slide_number,
+        "content_blocks": []
     }
 
-    if raw_text and raw_text[0] in bullet_chars:
-        return bullet_chars[raw_text[0]]
+    for _, _, shape in positioned_shapes:
+        block = extract_shape_content_simple(shape)
+        if block:
+            slide_data["content_blocks"].append(block)
 
-    return -1
-
-
-def has_bullet_like_text(text):
-    """Check if text starts with bullet-like characters."""
-    if not text:
-        return False
-
-    bullet_chars = ['•', '◦', '▪', '▫', '‣', '·', '-', '*']
-    return text[0] in bullet_chars
+    return slide_data
 
 
-def format_bullet_item_enhanced(paragraph, level):
-    """Enhanced bullet formatting with better text extraction."""
-    # Extract formatted text while preserving inline formatting
-    formatted_text = extract_formatted_text(paragraph.runs)
-
-    # Remove existing bullet characters from the beginning
-    cleaned_text = remove_bullet_chars(formatted_text)
-
-    # Ensure level is reasonable
-    level = max(0, min(level, 5))  # Cap between 0 and 5
-
-    # Create proper markdown bullet with indentation
-    indent = "  " * level
-    return f"{indent}- {cleaned_text}"
-
-
-def remove_bullet_chars(text):
-    """Remove bullet characters from the beginning of text."""
-    if not text:
-        return text
-
-    # Remove various bullet characters and any following whitespace
-    bullet_pattern = r'^[•◦▪▫‣·\-*]\s*'
-    return re.sub(bullet_pattern, '', text)
-
-
-def is_numbered_list_enhanced(paragraph):
-    """Enhanced numbered list detection."""
-    text = paragraph.text.strip()
-    if not text:
-        return False
-
-    # Expanded patterns for numbered lists
-    numbered_patterns = [
-        r'^\d+[\.\)]\s',  # 1. or 1)
-        r'^[a-z][\.\)]\s',  # a. or a)
-        r'^[A-Z][\.\)]\s',  # A. or A)
-        r'^[ivxlcdm]+[\.\)]\s',  # i. ii. iii. (roman numerals)
-        r'^\([0-9a-zA-Z]+\)\s',  # (1) or (a)
-        r'^\d+\.\d+[\.\)]\s',  # 1.1. or 1.1)
-    ]
-
-    for pattern in numbered_patterns:
-        if re.match(pattern, text, re.IGNORECASE):
-            return True
-
-    return False
-
-
-def format_numbered_item_enhanced(paragraph):
-    """Enhanced numbered list formatting."""
-    formatted_text = extract_formatted_text(paragraph.runs)
-
-    # Try to determine the numbering level from indentation or formatting
-    level = 0
-    try:
-        if hasattr(paragraph, 'level') and paragraph.level is not None:
-            level = paragraph.level
-        else:
-            # Estimate level from indentation
-            original_text = paragraph.text
-            leading_spaces = len(original_text) - len(original_text.lstrip(' '))
-            if leading_spaces > 0:
-                level = leading_spaces // 4  # Assume 4 spaces per level for numbered lists
-    except:
-        pass
-
-    # Apply indentation for nested numbered lists
-    indent = "   " * level  # 3 spaces for numbered list indentation
-
-    # For markdown compatibility, use "1." for all numbered items
-    return f"{indent}1. {formatted_text}"
-
-
-# Keep all the existing functions that are working well
-def extract_shape_hyperlink(shape):
-    """Extract hyperlink from shape click actions."""
-    try:
-        if hasattr(shape, 'click_action') and shape.click_action is not None:
-            if hasattr(shape.click_action, 'hyperlink') and shape.click_action.hyperlink is not None:
-                if shape.click_action.hyperlink.address:
-                    return fix_url(shape.click_action.hyperlink.address)
-    except:
-        pass
-
+def extract_shape_content_simple(shape):
+    """Extract shape content without complex formatting logic"""
+    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+        return extract_image_simple(shape)
+    elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+        return extract_table_simple(shape.table)
+    elif hasattr(shape, 'has_chart') and shape.has_chart:
+        return extract_chart_simple(shape)
+    elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+        return extract_group_simple(shape)
+    elif hasattr(shape, 'text_frame') and shape.text_frame:
+        return extract_text_frame_simple(shape.text_frame, shape)
+    elif hasattr(shape, 'text') and shape.text:
+        return extract_plain_text_simple(shape)
     return None
 
 
-def get_shape_context(shape):
-    """Determine the context of a shape (title, content, etc.)."""
+def extract_chart_simple(shape):
+    """Extract chart/diagram information for potential Mermaid conversion"""
     try:
-        if hasattr(shape, 'placeholder_format'):
-            if shape.placeholder_format.type == 1:  # Title placeholder
-                return "title"
-            elif shape.placeholder_format.type == 2:  # Content placeholder
-                return "content"
-            elif shape.placeholder_format.type == 3:  # Content with caption
-                return "content"
+        chart = shape.chart
+        chart_data = {
+            "type": "chart",
+            "chart_type": str(chart.chart_type) if hasattr(chart, 'chart_type') else "unknown",
+            "title": "",
+            "data_points": [],
+            "categories": [],
+            "series": [],
+            "hyperlink": extract_shape_hyperlink(shape)
+        }
 
-        # Check shape name for clues
-        if hasattr(shape, 'name'):
-            name_lower = shape.name.lower()
-            if 'title' in name_lower:
-                return "title"
-            elif 'header' in name_lower or 'heading' in name_lower:
-                return "header"
-    except:
-        pass
+        # Try to get chart title
+        try:
+            if hasattr(chart, 'chart_title') and chart.chart_title and hasattr(chart.chart_title, 'text_frame'):
+                chart_data["title"] = chart.chart_title.text_frame.text.strip()
+        except:
+            pass
+
+        # Try to extract data for potential Mermaid conversion
+        try:
+            if hasattr(chart, 'plots') and chart.plots:
+                plot = chart.plots[0]
+                if hasattr(plot, 'categories') and plot.categories:
+                    chart_data["categories"] = [cat.label for cat in plot.categories if hasattr(cat, 'label')]
+
+                if hasattr(plot, 'series') and plot.series:
+                    for series in plot.series:
+                        series_data = {
+                            "name": series.name if hasattr(series, 'name') else "",
+                            "values": []
+                        }
+                        if hasattr(series, 'values'):
+                            try:
+                                series_data["values"] = [val for val in series.values if val is not None]
+                            except:
+                                pass
+                        chart_data["series"].append(series_data)
+        except:
+            pass
+
+        return chart_data
+
+    except Exception:
+        # Fallback for charts we can't parse
+        return {
+            "type": "chart",
+            "chart_type": "unknown",
+            "title": "Chart",
+            "data_points": [],
+            "categories": [],
+            "series": [],
+            "hyperlink": extract_shape_hyperlink(shape)
+        }
+
+
+def extract_group_simple(shape):
+    """Extract content from grouped shapes - potential diagrams"""
+    try:
+        group_data = {
+            "type": "group",
+            "shapes": [],
+            "connections": [],
+            "hyperlink": extract_shape_hyperlink(shape)
+        }
+
+        # Process shapes in the group
+        for child_shape in shape.shapes:
+            child_data = extract_shape_content_simple(child_shape)
+            if child_data:
+                # Add position information for diagram analysis
+                if hasattr(child_shape, 'top') and hasattr(child_shape, 'left'):
+                    child_data["position"] = {
+                        "top": child_shape.top,
+                        "left": child_shape.left,
+                        "width": getattr(child_shape, 'width', 0),
+                        "height": getattr(child_shape, 'height', 0)
+                    }
+                group_data["shapes"].append(child_data)
+
+        # Analyze for potential diagram patterns
+        group_data["diagram_type"] = analyze_diagram_pattern(group_data["shapes"])
+
+        return group_data
+
+    except Exception:
+        return None
+
+
+def analyze_diagram_pattern(shapes):
+    """Analyze shapes to determine if they form a recognizable diagram pattern"""
+    if not shapes:
+        return "unknown"
+
+    text_shapes = [s for s in shapes if s.get("type") == "text"]
+
+    # Look for flowchart patterns
+    flowchart_keywords = [
+        "start", "end", "begin", "finish", "process", "decision", "if", "then", "else",
+        "input", "output", "step", "stage", "phase", "flow", "next", "previous"
+    ]
+
+    # Look for organizational chart patterns
+    org_keywords = [
+        "manager", "director", "ceo", "cto", "team", "lead", "reports to",
+        "department", "division", "head", "supervisor", "employee"
+    ]
+
+    # Look for process diagram patterns
+    process_keywords = [
+        "workflow", "procedure", "method", "sequence", "order", "first", "second",
+        "last", "finally", "initial", "final", "stage", "milestone"
+    ]
+
+    # Look for network/system diagram patterns
+    network_keywords = [
+        "server", "database", "client", "network", "connection", "api", "service",
+        "component", "module", "system", "interface", "protocol"
+    ]
+
+    # Analyze text content
+    all_text = " ".join([
+        shape.get("content", {}).get("clean_text", "") if isinstance(shape.get("content"), dict)
+        else str(shape.get("content", ""))
+        for shape in text_shapes
+    ]).lower()
+
+    # Count keyword matches
+    flowchart_score = sum(1 for keyword in flowchart_keywords if keyword in all_text)
+    org_score = sum(1 for keyword in org_keywords if keyword in all_text)
+    process_score = sum(1 for keyword in process_keywords if keyword in all_text)
+    network_score = sum(1 for keyword in network_keywords if keyword in all_text)
+
+    # Determine diagram type based on highest score
+    scores = {
+        "flowchart": flowchart_score,
+        "org_chart": org_score,
+        "process": process_score,
+        "network": network_score
+    }
+
+    max_score = max(scores.values())
+    if max_score >= 2:  # Require at least 2 keyword matches
+        return max(scores, key=scores.get)
+
+    # Fallback: analyze shape arrangement
+    if len(shapes) >= 3:
+        # Check if shapes are arranged in a potentially hierarchical way
+        if has_hierarchical_arrangement(shapes):
+            return "hierarchy"
+        elif has_linear_arrangement(shapes):
+            return "sequence"
+        else:
+            return "diagram"
 
     return "unknown"
 
 
-def extract_image_content(shape):
-    """Extract alt-text from images and check for hyperlinks."""
-    try:
-        alt_text = ""
+def has_hierarchical_arrangement(shapes):
+    """Check if shapes are arranged hierarchically (org chart, tree structure)"""
+    positioned_shapes = [s for s in shapes if "position" in s]
+    if len(positioned_shapes) < 3:
+        return False
 
-        # Try to get alt text from various properties
-        if hasattr(shape, 'alt_text') and shape.alt_text:
-            alt_text = shape.alt_text
-        elif hasattr(shape, 'image') and hasattr(shape.image, 'alt_text'):
-            alt_text = shape.image.alt_text
-        elif hasattr(shape, '_element'):
-            # Try to extract from XML if available
-            try:
-                # Look for description in the XML
-                xml_str = str(shape._element.xml) if hasattr(shape._element, 'xml') else ""
-                import xml.etree.ElementTree as ET
-                root = ET.fromstring(xml_str)
+    # Sort by vertical position
+    sorted_by_top = sorted(positioned_shapes, key=lambda x: x["position"]["top"])
 
-                # Look for alt text in various XML locations
-                for elem in root.iter():
-                    if 'descr' in elem.attrib:
-                        alt_text = elem.attrib['descr']
-                        break
-                    elif 'title' in elem.attrib:
-                        alt_text = elem.attrib['title']
-                        break
-            except:
-                pass
+    # Check if there are clear levels (groups of shapes at similar heights)
+    levels = []
+    current_level = []
+    tolerance = 50  # EMU tolerance for same level
 
-        # Create the image markdown
-        if alt_text:
-            image_md = f"![{clean_text(alt_text)}](image)"
+    for shape in sorted_by_top:
+        if not current_level:
+            current_level.append(shape)
+        elif abs(shape["position"]["top"] - current_level[0]["position"]["top"]) <= tolerance:
+            current_level.append(shape)
         else:
-            image_md = "![Image](image)"
+            levels.append(current_level)
+            current_level = [shape]
 
-        # Check for hyperlinks on the image
-        shape_hyperlink = extract_shape_hyperlink(shape)
-        if shape_hyperlink:
-            return f"[{image_md}]({shape_hyperlink})"
+    if current_level:
+        levels.append(current_level)
 
-        return image_md
-
-    except:
-        return "![Image](image)"
+    # Hierarchical if we have at least 2 levels with the top having fewer items
+    return len(levels) >= 2 and len(levels[0]) <= len(levels[1])
 
 
-def extract_group_content(group_shape):
-    """Extract content from grouped shapes."""
-    content_parts = []
+def has_linear_arrangement(shapes):
+    """Check if shapes are arranged in a linear sequence"""
+    positioned_shapes = [s for s in shapes if "position" in s]
+    if len(positioned_shapes) < 3:
+        return False
 
-    try:
-        for shape in group_shape.shapes:
-            shape_content = extract_shape_content(shape)
-            if shape_content.strip():
-                content_parts.append(shape_content)
-    except:
-        pass
+    # Check for primarily horizontal or vertical arrangement
+    positions = [(s["position"]["left"], s["position"]["top"]) for s in positioned_shapes]
 
-    return "\n\n".join(content_parts)
+    # Calculate variance in horizontal vs vertical positioning
+    lefts = [p[0] for p in positions]
+    tops = [p[1] for p in positions]
+
+    left_variance = max(lefts) - min(lefts) if lefts else 0
+    top_variance = max(tops) - min(tops) if tops else 0
+
+    # Linear if one dimension has much more variance than the other
+    return (left_variance > top_variance * 2) or (top_variance > left_variance * 2)
 
 
-def extract_formatted_text(runs):
-    """Extract text from runs with formatting applied."""
-    if not runs:
-        return ""
+def extract_text_frame_simple(text_frame, shape):
+    """Extract text with basic hints for Claude"""
+    if not text_frame.paragraphs:
+        return None
 
-    # Process each run and collect the results
-    formatted_parts = []
+    block = {
+        "type": "text",
+        "paragraphs": [],
+        "shape_hyperlink": extract_shape_hyperlink(shape)
+    }
 
-    for run in runs:
-        text = run.text
-        if text is None:
+    for para in text_frame.paragraphs:
+        if not para.text.strip():
             continue
 
-        # Don't clean the text too aggressively - preserve spaces
-        # Only do minimal cleaning
-        if text:
-            # Replace smart quotes but preserve other characters
-            text = text.replace('"', '"').replace('"', '"')
-            text = text.replace(''', "'").replace(''', "'")
-            text = text.replace('—', '--').replace('–', '-')
+        para_data = {
+            "raw_text": para.text,  # Preserve original spacing/indentation
+            "clean_text": para.text.strip(),
+            "hints": {
+                "has_powerpoint_level": hasattr(para, 'level') and para.level is not None,
+                "powerpoint_level": getattr(para, 'level', None),
+                "indented": len(para.text) != len(para.text.lstrip()),
+                "starts_with_bullet": para.text.strip() and para.text.strip()[0] in '•◦▪▫‣·-*+',
+                "starts_with_number": bool(re.match(r'^\s*\d+[\.\)]\s', para.text)),
+                "short_text": len(para.text.strip()) < 100,
+                "all_caps": para.text.strip().isupper() if para.text.strip() else False
+            },
+            "formatted_runs": extract_runs_simple(para.runs)
+        }
 
-        # Apply formatting to this run
-        formatted_text = apply_formatting(text, run)
-        formatted_parts.append(formatted_text)
+        block["paragraphs"].append(para_data)
 
-    # Join all parts together
-    result = "".join(formatted_parts)
-
-    # Only fix obvious spacing issues, don't be too aggressive
-    result = fix_basic_spacing(result)
-
-    return result
-
-
-def fix_basic_spacing(text):
-    """Fix basic spacing issues without being too aggressive."""
-    if not text:
-        return text
-
-    # Fix spacing around markdown formatting - be more precise
-    # Fix cases where formatting is directly adjacent to words
-
-    # Bold formatting: **word**nextword -> **word** nextword
-    text = re.sub(r'\*\*([^*]+)\*\*([a-zA-Z])', r'**\1** \2', text)
-
-    # Italic formatting: *word*nextword -> *word* nextword
-    text = re.sub(r'\*([^*]+)\*([a-zA-Z])', r'*\1* \2', text)
-
-    # Code formatting: `word`nextword -> `word` nextword
-    text = re.sub(r'`([^`]+)`([a-zA-Z])', r'`\1` \2', text)
-
-    # Combined formatting: ***word***nextword -> ***word*** nextword
-    text = re.sub(r'\*\*\*([^*]+)\*\*\*([a-zA-Z])', r'***\1*** \2', text)
-
-    # Fix multiple consecutive spaces
-    text = re.sub(r' {2,}', ' ', text)
-
-    return text
+    return block
 
 
-def apply_formatting(text, run):
-    """Apply markdown formatting based on run properties, including hyperlinks."""
-    if not text.strip():
-        return text
+def extract_runs_simple(runs):
+    """Extract formatting and hyperlinks from runs"""
+    formatted_runs = []
 
-    try:
-        # Check for hyperlinks first
-        if hasattr(run, 'hyperlink') and run.hyperlink and run.hyperlink.address:
-            url = fix_url(run.hyperlink.address)
-            # Apply other formatting to the text, then wrap in hyperlink
-            formatted = apply_text_formatting(text, run)
-            return f"[{formatted}]({url})"
+    for run in runs:
+        run_data = {
+            "text": run.text,
+            "bold": False,
+            "italic": False,
+            "hyperlink": None
+        }
 
-        # No hyperlink, just apply text formatting
-        formatted = apply_text_formatting(text, run)
+        # Get formatting
+        try:
+            font = run.font
+            if hasattr(font, 'bold') and font.bold:
+                run_data["bold"] = True
+            if hasattr(font, 'italic') and font.italic:
+                run_data["italic"] = True
+        except:
+            pass
 
-    except:
-        # If we can't access run properties, just return the text
-        formatted = text
+        # Get hyperlinks
+        try:
+            if hasattr(run, 'hyperlink') and run.hyperlink and run.hyperlink.address:
+                run_data["hyperlink"] = fix_url(run.hyperlink.address)
+        except:
+            pass
 
-    return formatted
+        formatted_runs.append(run_data)
+
+    return formatted_runs
 
 
-def apply_text_formatting(text, run):
-    """Apply text formatting (bold, italic, etc.) to text."""
-    if not text.strip():
-        return text
-
-    formatted = text
+def extract_image_simple(shape):
+    """Extract image info with proper alt text extraction"""
+    alt_text = "Image"
 
     try:
-        font = run.font
-
-        # Track what formatting we're applying to avoid conflicts
-        has_bold = False
-        has_italic = False
-
-        # Check for bold
-        if hasattr(font, 'bold') and font.bold:
-            has_bold = True
-
-        # Check for italic
-        if hasattr(font, 'italic') and font.italic:
-            has_italic = True
-
-        # Check for underline (convert to bold if not already bold)
-        if hasattr(font, 'underline') and font.underline and not has_bold:
-            has_bold = True
-
-        # Apply formatting in the right order
-        if has_bold and has_italic:
-            formatted = f"***{formatted}***"
-        elif has_bold:
-            formatted = f"**{formatted}**"
-        elif has_italic:
-            formatted = f"*{formatted}*"
-
-        # Check for monospace/code fonts (only if not already formatted)
-        if not (has_bold or has_italic):
-            if hasattr(font, 'name') and font.name:
-                monospace_fonts = ['Courier', 'Consolas', 'Monaco', 'Menlo', 'Source Code Pro', 'Courier New']
-                if any(mono_font in font.name for mono_font in monospace_fonts):
-                    formatted = f"`{formatted}`"
-
+        # Try multiple methods to get alt text
+        if hasattr(shape, 'alt_text') and shape.alt_text:
+            alt_text = shape.alt_text
+        elif hasattr(shape, 'image') and hasattr(shape.image, 'alt_text') and shape.image.alt_text:
+            alt_text = shape.image.alt_text
+        elif hasattr(shape, '_element'):
+            # Try to extract from XML
+            import xml.etree.ElementTree as ET
+            try:
+                xml_str = str(shape._element.xml) if hasattr(shape._element, 'xml') else ""
+                if xml_str:
+                    root = ET.fromstring(xml_str)
+                    # Look for description attributes
+                    for elem in root.iter():
+                        if 'descr' in elem.attrib and elem.attrib['descr']:
+                            alt_text = elem.attrib['descr']
+                            break
+                        elif 'title' in elem.attrib and elem.attrib['title']:
+                            alt_text = elem.attrib['title']
+                            break
+            except:
+                pass
     except:
         pass
 
-    return formatted
+    return {
+        "type": "image",
+        "alt_text": alt_text.strip() if alt_text else "Image",
+        "hyperlink": extract_shape_hyperlink(shape)
+    }
+
+
+def extract_table_simple(table):
+    """Extract table data"""
+    if not table.rows:
+        return None
+
+    table_data = []
+    for row in table.rows:
+        row_data = []
+        for cell in row.cells:
+            # Extract cell text with basic formatting
+            cell_content = ""
+            if hasattr(cell, 'text_frame') and cell.text_frame:
+                for para in cell.text_frame.paragraphs:
+                    if para.text.strip():
+                        cell_content += para.text.strip() + " "
+            else:
+                cell_content = cell.text
+            row_data.append(cell_content.strip())
+        table_data.append(row_data)
+
+    return {
+        "type": "table",
+        "data": table_data
+    }
+
+
+def extract_plain_text_simple(shape):
+    """Extract plain text from shape"""
+    return {
+        "type": "text",
+        "paragraphs": [{
+            "raw_text": shape.text,
+            "clean_text": shape.text.strip(),
+            "hints": {
+                "has_powerpoint_level": False,
+                "powerpoint_level": None,
+                "indented": False,
+                "starts_with_bullet": shape.text.strip() and shape.text.strip()[0] in '•◦▪▫‣·-*+',
+                "starts_with_number": bool(re.match(r'^\s*\d+[\.\)]\s', shape.text)),
+                "short_text": len(shape.text.strip()) < 100,
+                "all_caps": shape.text.strip().isupper() if shape.text.strip() else False
+            },
+            "formatted_runs": [{"text": shape.text, "bold": False, "italic": False, "hyperlink": None}]
+        }],
+        "shape_hyperlink": extract_shape_hyperlink(shape)
+    }
+
+
+def extract_shape_hyperlink(shape):
+    """Extract shape-level hyperlink"""
+    try:
+        if hasattr(shape, 'click_action') and shape.click_action:
+            if hasattr(shape.click_action, 'hyperlink') and shape.click_action.hyperlink:
+                if shape.click_action.hyperlink.address:
+                    return fix_url(shape.click_action.hyperlink.address)
+    except:
+        pass
+    return None
 
 
 def fix_url(url):
-    """Fix URLs by adding appropriate schemes if missing."""
+    """Fix URLs by adding schemes if missing"""
     if not url:
         return url
 
-    # For email addresses
     if '@' in url and not url.startswith('mailto:'):
         return f"mailto:{url}"
 
-    # For web URLs
     if not url.startswith(('http://', 'https://', 'mailto:', 'tel:', 'ftp://', '#')):
         if url.startswith('www.') or any(
                 domain in url.lower() for domain in ['.com', '.org', '.net', '.edu', '.gov', '.io']):
@@ -629,507 +615,172 @@ def fix_url(url):
     return url
 
 
-def apply_hierarchy_formatting(text, paragraph, context):
-    """Apply hierarchy formatting (headers) based on context and text properties."""
+def convert_structured_data_to_markdown(data):
+    """Convert structured data to basic markdown (Claude will enhance)"""
+    markdown_parts = []
 
-    # Don't apply header formatting to list-related content
-    stripped_text = text.strip()
-    if any(phrase in stripped_text.lower() for phrase in [
-        'first level', 'second level', 'third level', 'another', 'back to',
-        'sub-item', 'nested', 'bullet under'
-    ]):
-        return text
+    for slide in data["slides"]:
+        # Add slide marker
+        markdown_parts.append(f"\n<!-- Slide {slide['slide_number']} -->\n")
 
-    # Check if this should be a title (h1)
-    if context == "title" or is_likely_title(text, paragraph, context):
-        return f"# {text}"
+        for block in slide["content_blocks"]:
+            if block["type"] == "text":
+                markdown_parts.append(convert_text_block_to_markdown(block))
+            elif block["type"] == "table":
+                markdown_parts.append(convert_table_to_markdown(block))
+            elif block["type"] == "image":
+                markdown_parts.append(convert_image_to_markdown(block))
+            elif block["type"] == "chart":
+                markdown_parts.append(convert_chart_to_markdown(block))
+            elif block["type"] == "group":
+                markdown_parts.append(convert_group_to_markdown(block))
 
-    # Check if this should be a header
-    header_level = detect_header_level(text, paragraph, context)
-    if header_level > 0:
-        return f"{'#' * header_level} {text}"
-
-    # Regular paragraph
-    return text
-
-
-def is_likely_title(text, paragraph, context):
-    """Determine if text should be treated as a main title."""
-    # Explicit title context
-    if context == "title":
-        return True
-
-    # Don't make list items into titles
-    if text.strip() and text.strip()[0] in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']:
-        return False
-
-    # Short text that's all caps AND not in a list
-    if len(text) < 80 and text.isupper() and len(text) > 3:
-        # But not if it looks like a list item description
-        if any(phrase in text.upper() for phrase in
-               ['FIRST LEVEL', 'SECOND LEVEL', 'THIRD LEVEL', 'ANOTHER', 'BACK TO']):
-            return False
-        return True
-
-    # Check if it's the first significant text and relatively short
-    if len(text) < 60 and context in ["unknown", "content"]:
-        # Additional checks for title-like properties
-        try:
-            if paragraph.runs and len(paragraph.runs) > 0:
-                first_run = paragraph.runs[0]
-                if hasattr(first_run.font, 'size') and first_run.font.size:
-                    # If font size is significantly large, it might be a title
-                    # This is a heuristic - you might need to adjust based on your needs
-                    return True
-        except:
-            pass
-
-    return False
+    return "\n\n".join(filter(None, markdown_parts))
 
 
-def detect_header_level(text, paragraph, context):
-    """Detect if text should be a header and what level."""
+def convert_text_block_to_markdown(block):
+    """Convert text block to basic markdown"""
+    lines = []
 
-    # Don't make headers if text is too long
-    if len(text) > 120:
-        return 0
+    for para in block["paragraphs"]:
+        line = convert_paragraph_to_markdown(para)
+        if line:
+            lines.append(line)
 
-    # Don't make headers out of list items
-    stripped_text = text.strip()
-    if any(phrase in stripped_text.lower() for phrase in [
-        'first level', 'second level', 'third level', 'another', 'back to',
-        'sub-item', 'nested', 'bullet under', 'numbered item'
-    ]):
-        return 0
+    # If entire shape is a hyperlink, wrap it
+    result = "\n".join(lines)
+    if block.get("shape_hyperlink") and result:
+        result = f"[{result}]({block['shape_hyperlink']})"
 
-    # Check for explicit header context
-    if context == "header":
-        return 2
-
-    # Only check for headers that end with ':' and look like section headers
-    if stripped_text.endswith(':') and len(stripped_text) < 50:
-        # This might be a section header like "Unordered Lists:" or "Mixed Lists:"
-        if any(word in stripped_text for word in ['Lists', 'Examples', 'Section', 'Part']):
-            return 3
-
-    # Check for text properties that suggest header
-    try:
-        if paragraph.runs and len(paragraph.runs) > 0:
-            first_run = paragraph.runs[0]
-
-            # Check if text is bold and relatively short
-            if hasattr(first_run.font, 'bold') and first_run.font.bold and len(text) < 80:
-                # But not if it's a list item
-                if not any(char in text for char in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']):
-                    # Determine header level based on length and other factors
-                    if len(text) < 40:
-                        return 3  # h3 for short bold text
-                    else:
-                        return 2  # h2 for longer bold text
-    except:
-        pass
-
-    return 0  # Not a header
+    return result
 
 
-def extract_table_content(table):
-    """Extract table content in markdown format with formatting preservation."""
-    if not table.rows:
+def convert_chart_to_markdown(block):
+    """Convert chart to markdown with Mermaid diagram suggestion"""
+    chart_md = f"**Chart: {block.get('title', 'Untitled Chart')}**\n"
+    chart_md += f"*Chart Type: {block.get('chart_type', 'unknown')}*\n\n"
+
+    # Add data if available
+    if block.get('categories') and block.get('series'):
+        chart_md += "Data:\n"
+        for series in block['series']:
+            if series.get('name'):
+                chart_md += f"- {series['name']}: "
+                if series.get('values'):
+                    chart_md += ", ".join(map(str, series['values'][:5]))  # Limit to first 5 values
+                    if len(series['values']) > 5:
+                        chart_md += "..."
+                chart_md += "\n"
+
+    # Add comment for Claude to potentially convert to Mermaid
+    chart_md += f"\n<!-- DIAGRAM_CANDIDATE: chart, type={block.get('chart_type', 'unknown')} -->\n"
+
+    if block.get("hyperlink"):
+        chart_md = f"[{chart_md}]({block['hyperlink']})"
+
+    return chart_md
+
+
+def convert_group_to_markdown(block):
+    """Convert grouped shapes to markdown with diagram analysis"""
+    diagram_type = block.get("diagram_type", "unknown")
+
+    # Start with diagram identification
+    group_md = f"**Diagram ({diagram_type})**\n\n"
+
+    # Convert individual shapes
+    shape_content = []
+    for shape in block.get("shapes", []):
+        if shape.get("type") == "text" and shape.get("content"):
+            content = convert_text_block_to_markdown(shape)
+            if content:
+                shape_content.append(content)
+        elif shape.get("type") == "image":
+            image_md = convert_image_to_markdown(shape)
+            if image_md:
+                shape_content.append(image_md)
+
+    if shape_content:
+        group_md += "\n".join(shape_content)
+
+    # Add diagram conversion hint for Claude
+    group_md += f"\n\n<!-- DIAGRAM_CANDIDATE: {diagram_type}, shapes={len(block.get('shapes', []))} -->\n"
+
+    if block.get("hyperlink"):
+        group_md = f"[{group_md}]({block['hyperlink']})"
+
+    return group_md
+
+
+def convert_paragraph_to_markdown(para):
+    """Convert paragraph to basic markdown with formatting"""
+    if not para["clean_text"]:
         return ""
 
-    markdown_table = ""
-
-    for row_idx, row in enumerate(table.rows):
-        row_content = "|"
-
-        for cell in row.cells:
-            cell_text = ""
-            if hasattr(cell, 'text_frame') and cell.text_frame:
-                # Extract text from cell with formatting
-                for paragraph in cell.text_frame.paragraphs:
-                    para_text = extract_formatted_text(paragraph.runs)
-                    if para_text.strip():
-                        cell_text += para_text + " "
-            elif hasattr(cell, 'text') and cell.text:
-                cell_text = clean_text(cell.text)
-
-            # Clean up cell text
-            cell_text = cell_text.strip().replace('\n', ' ').replace('|', '\\|')
-            row_content += f" {cell_text} |"
-
-        markdown_table += row_content + "\n"
-
-        # Add separator after header row
-        if row_idx == 0:
-            separator = "|"
-            for _ in row.cells:
-                separator += "---------|"
-            markdown_table += separator + "\n"
-
-    return markdown_table
-
-
-def clean_text(text):
-    """Clean and normalize text - minimal cleaning to preserve spacing."""
-    if not text:
-        return ""
-
-    # Only replace smart quotes and special dashes
-    # Don't mess with spaces or other characters
-    text = text.replace('"', '"').replace('"', '"')
-    text = text.replace(''', "'").replace(''', "'")
-    text = text.replace('—', '--').replace('–', '-')
-
-    # Don't normalize whitespace aggressively - only trim start/end
-    return text.strip()
-
-
-# Debug functions for troubleshooting
-def debug_paragraph_properties(paragraph):
-    """Debug function to print paragraph properties for troubleshooting."""
-    print(f"Text: '{paragraph.text}'")
-    print(f"Level: {getattr(paragraph, 'level', 'None')}")
-
-    try:
-        if hasattr(paragraph, '_p') and paragraph._p is not None:
-            xml_str = str(paragraph._p.xml)[:200] + "..." if len(str(paragraph._p.xml)) > 200 else str(paragraph._p.xml)
-            print(f"XML snippet: {xml_str}")
-    except:
-        print("XML: Not accessible")
-
-    print("---")
-
-
-def test_bullet_detection(paragraph):
-    """Test function to see how different detection methods work."""
-    raw_text = paragraph.text.strip()
-
-    methods = {
-        "PowerPoint Level": get_powerpoint_bullet_level(paragraph),
-        "XML Level": get_xml_bullet_level(paragraph),
-        "Indentation Level": get_indentation_bullet_level(paragraph, raw_text),
-        "Character Level": get_character_bullet_level(raw_text),
-        "Final Level": detect_bullet_level_enhanced(paragraph, raw_text)
-    }
-
-    print(f"Text: '{raw_text}'")
-    for method, level in methods.items():
-        print(f"{method}: {level}")
-    print("---")
-
-    return methods["Final Level"]
-
-
-def process_content_placeholder_enhanced(text_frame, context="content"):
-    """Enhanced processing specifically for content placeholders with robust bullet detection."""
-    if not text_frame or not text_frame.paragraphs:
-        return ""
-
-    # First, analyze the entire text frame to understand its structure
-    structure_analysis = analyze_text_frame_structure(text_frame)
-
-    # Process paragraphs with the structure context
-    processed_paragraphs = []
-
-    for i, paragraph in enumerate(text_frame.paragraphs):
-        if not paragraph.text.strip():
-            continue
-
-        processed_para = process_paragraph_with_context(
-            paragraph, i, structure_analysis, context
-        )
-
-        if processed_para.strip():
-            processed_paragraphs.append(processed_para)
-
-    return "\n".join(processed_paragraphs)
-
-
-def analyze_text_frame_structure(text_frame):
-    """Analyze the entire text frame to understand bullet patterns and structure."""
-    analysis = {
-        'total_paragraphs': len(text_frame.paragraphs),
-        'bullet_paragraphs': [],
-        'level_distribution': defaultdict(int),
-        'bullet_styles': set(),
-        'has_mixed_content': False,
-        'predominant_pattern': None,
-        'bullet_indicators': []
-    }
-
-    bullet_indicators = []
-
-    for i, para in enumerate(text_frame.paragraphs):
-        text = para.text.strip()
+    # Build formatted text from runs
+    formatted_text = ""
+    for run in para["formatted_runs"]:
+        text = run["text"]
         if not text:
             continue
 
-        # Comprehensive bullet detection for analysis
-        bullet_info = detect_all_bullet_indicators(para, text)
+        # Apply formatting
+        if run["bold"] and run["italic"]:
+            text = f"***{text}***"
+        elif run["bold"]:
+            text = f"**{text}**"
+        elif run["italic"]:
+            text = f"*{text}*"
 
-        if bullet_info['is_bullet']:
-            analysis['bullet_paragraphs'].append(i)
-            analysis['level_distribution'][bullet_info['level']] += 1
-            analysis['bullet_styles'].add(bullet_info['style'])
-            bullet_indicators.append(bullet_info)
-        else:
-            # Check if this might be a continuation or non-bullet content
-            if bullet_indicators:  # We have bullets before this
-                analysis['has_mixed_content'] = True
+        # Apply hyperlink
+        if run["hyperlink"]:
+            text = f"[{text}]({run['hyperlink']})"
 
-    analysis['bullet_indicators'] = bullet_indicators
+        formatted_text += text
 
-    # Determine the predominant pattern
-    if len(bullet_indicators) > 0:
-        if all(bi['method'] == 'powerpoint_native' for bi in bullet_indicators):
-            analysis['predominant_pattern'] = 'powerpoint_native'
-        elif all(bi['method'] == 'manual_typed' for bi in bullet_indicators):
-            analysis['predominant_pattern'] = 'manual_typed'
-        else:
-            analysis['predominant_pattern'] = 'mixed'
+    # Basic structure hints for Claude
+    hints = para["hints"]
 
-    return analysis
-
-
-def detect_all_bullet_indicators(paragraph, text):
-    """Comprehensive bullet detection that checks all possible indicators."""
-    result = {
-        'is_bullet': False,
-        'level': 0,
-        'style': None,
-        'method': None,
-        'confidence': 0,
-        'original_text': text
-    }
-
-    # Method 1: PowerPoint Native Bullets (highest confidence)
-    native_result = detect_powerpoint_native_bullets(paragraph)
-    if native_result['is_bullet']:
-        result.update(native_result)
-        result['confidence'] = 100
-        return result
-
-    # Method 2: XML-based detection (high confidence) - use your existing function
-    if has_bullet_formatting(paragraph):
-        xml_level = get_xml_bullet_level(paragraph)
-        if xml_level >= 0:
-            result['is_bullet'] = True
-            result['level'] = xml_level
-            result['style'] = 'xml'
-            result['method'] = 'xml_analysis'
-            result['confidence'] = 90
-            return result
-
-    # Method 3: Manual typed bullets (medium confidence)
-    manual_result = detect_manual_bullets_robust(text)
-    if manual_result['is_bullet']:
-        result.update(manual_result)
-        result['confidence'] = 70
-        # Try to get level from indentation
-        indent_level = detect_indentation_level_robust(paragraph.text)
-        if indent_level > 0:
-            result['level'] = indent_level
-        return result
-
-    # Method 4: Pattern-based detection (low confidence)
-    if is_numbered_list_enhanced(paragraph):
-        result['is_bullet'] = True
-        result['level'] = 0
-        result['style'] = 'numbered'
-        result['method'] = 'pattern_based'
-        result['confidence'] = 50
-        return result
-
-    return result
-
-
-def detect_powerpoint_native_bullets(paragraph):
-    """Detect PowerPoint's native bullet formatting."""
-    result = {'is_bullet': False, 'level': 0, 'style': 'native', 'method': 'powerpoint_native'}
-
-    try:
-        # Check if paragraph has a level property
-        if hasattr(paragraph, 'level') and paragraph.level is not None:
-            # Verify it actually has bullet formatting
-            if has_bullet_formatting(paragraph):
-                result['is_bullet'] = True
-                result['level'] = paragraph.level
-                return result
-
-        # Sometimes level is None but it's still a bullet at level 0
-        if has_bullet_formatting(paragraph):
-            result['is_bullet'] = True
-            result['level'] = 0
-            return result
-
-    except Exception:
-        pass
-
-    return result
-
-
-def detect_manual_bullets_robust(text):
-    """Detect manually typed bullet characters."""
-    result = {'is_bullet': False, 'level': 0, 'style': 'manual', 'method': 'manual_typed'}
-
-    if not text:
-        return result
-
-    # Define bullet characters and their typical hierarchy
-    bullet_hierarchy = {
-        '•': 0,  # Primary bullet
-        '◦': 1,  # Secondary bullet (hollow)
-        '▪': 1,  # Secondary bullet (small square)
-        '▫': 2,  # Tertiary bullet (hollow square)
-        '‣': 1,  # Secondary bullet (triangular)
-        '·': 1,  # Secondary bullet (middle dot)
-        '○': 1,  # Secondary bullet (circle)
-        '■': 1,  # Secondary bullet (square)
-        '□': 2,  # Tertiary bullet (hollow square)
-        '→': 1,  # Arrow bullet
-        '►': 1,  # Arrow bullet
-        '✓': 1,  # Checkmark bullet
-        '✗': 1,  # X bullet
-        '-': 0,  # Dash bullet
-        '*': 0,  # Asterisk bullet
-        '+': 0,  # Plus bullet
-    }
-
-    first_char = text[0]
-    if first_char in bullet_hierarchy:
-        result['is_bullet'] = True
-        result['level'] = bullet_hierarchy[first_char]
-        result['style'] = f'manual_{first_char}'
-        return result
-
-    return result
-
-
-def detect_indentation_level_robust(text):
-    """Detect indentation level from the actual text."""
-    if not text:
-        return 0
-
-    # Count leading spaces
-    leading_spaces = len(text) - len(text.lstrip(' '))
-
-    # Count leading tabs (convert to equivalent spaces)
-    leading_tabs = len(text) - len(text.lstrip('\t'))
-    equivalent_spaces = leading_spaces + (leading_tabs * 4)
-
-    # Estimate level (assuming 2-4 spaces per level)
-    if equivalent_spaces == 0:
-        return 0
-    elif equivalent_spaces <= 4:
-        return 1
-    elif equivalent_spaces <= 8:
-        return 2
-    elif equivalent_spaces <= 12:
-        return 3
+    # Very simple formatting - Claude will fix the structure
+    if hints["starts_with_bullet"] or (hints["has_powerpoint_level"] and hints["powerpoint_level"] is not None):
+        # Simple bullet - Claude will fix the nesting
+        clean_text = formatted_text
+        # Remove existing bullet chars
+        clean_text = re.sub(r'^[•◦▪▫‣·\-\*\+]\s*', '', clean_text.strip())
+        return f"- {clean_text}"
+    elif hints["starts_with_number"]:
+        # Simple numbered item
+        clean_text = re.sub(r'^\s*\d+[\.\)]\s*', '', formatted_text)
+        return f"1. {clean_text}"
+    elif hints["short_text"] and hints["all_caps"]:
+        # Likely a header
+        return f"## {formatted_text}"
     else:
-        return min(equivalent_spaces // 4, 5)  # Cap at 5 levels
+        # Regular paragraph
+        return formatted_text
 
 
-def process_paragraph_with_context(paragraph, para_index, structure_analysis, context):
-    """Process a paragraph with full context awareness."""
-    text = paragraph.text.strip()
-    if not text:
+def convert_table_to_markdown(block):
+    """Convert table to markdown"""
+    if not block["data"]:
         return ""
 
-    # Get comprehensive bullet information
-    bullet_info = detect_all_bullet_indicators(paragraph, text)
+    markdown = ""
+    for i, row in enumerate(block["data"]):
+        markdown += "| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |\n"
 
-    if bullet_info['is_bullet']:
-        return format_bullet_with_context(paragraph, bullet_info, structure_analysis)
-    else:
-        # Handle non-bullet content
-        formatted_text = extract_formatted_text(paragraph.runs)
+        # Add separator after header
+        if i == 0:
+            markdown += "| " + " | ".join("---" for _ in row) + " |\n"
 
-        # Apply appropriate formatting based on context
-        if context == "title" or is_likely_title_in_context(formatted_text, paragraph, para_index, structure_analysis):
-            return f"# {formatted_text}"
-        elif should_be_header_robust(formatted_text, paragraph, structure_analysis):
-            return f"## {formatted_text}"
-        else:
-            return formatted_text
+    return markdown
 
 
-def format_bullet_with_context(paragraph, bullet_info, structure_analysis):
-    """Format a bullet point with full context awareness."""
-    # Extract the text content with formatting
-    formatted_text = extract_formatted_text(paragraph.runs)
+def convert_image_to_markdown(block):
+    """Convert image to markdown"""
+    image_md = f"![{block['alt_text']}](image)"
 
-    # Remove bullet characters if they were manually typed
-    if bullet_info['method'] == 'manual_typed':
-        formatted_text = remove_leading_bullet_chars_robust(formatted_text)
+    if block.get("hyperlink"):
+        image_md = f"[{image_md}]({block['hyperlink']})"
 
-    # Adjust level based on structure analysis if needed
-    level = bullet_info['level']
-
-    # Handle inconsistent leveling in mixed content
-    if structure_analysis['predominant_pattern'] == 'mixed':
-        level = normalize_level_in_mixed_content(level, bullet_info, structure_analysis)
-
-    # Cap the level to prevent excessive indentation
-    level = max(0, min(level, 5))
-
-    # Create markdown bullet
-    indent = "  " * level
-    return f"{indent}- {formatted_text.strip()}"
-
-
-def remove_leading_bullet_chars_robust(text):
-    """Remove leading bullet characters and normalize spacing."""
-    if not text:
-        return text
-
-    # Remove various bullet characters and normalize spacing
-    bullet_pattern = r'^[•◦▪▫‣·○■□→►✓✗\-\*\+]\s*'
-    cleaned = re.sub(bullet_pattern, '', text)
-
-    # Also handle numbered patterns
-    numbered_pattern = r'^(?:\d+[\.\)]|\([0-9a-zA-Z]+\)|[a-zA-Z][\.\)]|\d+\.\d+[\.\)]|[ivx]+[\.\)])\s*'
-    cleaned = re.sub(numbered_pattern, '', cleaned, flags=re.IGNORECASE)
-
-    return cleaned.strip()
-
-
-def normalize_level_in_mixed_content(level, bullet_info, structure_analysis):
-    """Normalize bullet levels when dealing with mixed content patterns."""
-    # If we have mixed manual and native bullets, try to normalize
-    if bullet_info['method'] == 'manual_typed':
-        # Manual bullets often have incorrect levels, try to infer from indentation
-        return detect_indentation_level_robust(bullet_info.get('original_text', ''))
-
-    return level
-
-
-def is_likely_title_in_context(text, paragraph, para_index, structure_analysis):
-    """Determine if text should be treated as a title given the context."""
-    # First paragraph in content placeholder, short, and no bullets after
-    if para_index == 0 and len(text) < 100 and structure_analysis['bullet_paragraphs']:
-        return True
-
-    # All caps and short
-    if text.isupper() and len(text) < 80:
-        return True
-
-    return False
-
-
-def should_be_header_robust(text, paragraph, structure_analysis):
-    """Determine if text should be formatted as a header."""
-    # Short text that ends with colon (like "Key Points:")
-    if len(text) < 60 and text.endswith(':'):
-        return True
-
-    # Bold text that's relatively short
-    try:
-        if paragraph.runs and len(paragraph.runs) > 0:
-            first_run = paragraph.runs[0]
-            if hasattr(first_run.font, 'bold') and first_run.font.bold and len(text) < 80:
-                return True
-    except:
-        pass
-
-    return False
+    return image_md

@@ -1,8 +1,5 @@
 """
-Claude Sonnet 4 Markdown Enhancement Module
-
-This module provides functions to enhance markdown documents using Claude Sonnet 4
-with the document-to-markdown conversion system prompt.
+Updated Claude Sonnet 4 Markdown Enhancement Module - Simplified for PowerPoint processing
 """
 
 import os
@@ -14,135 +11,125 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# The system prompt for document to markdown conversion
-DOCUMENT_TO_MARKDOWN_SYSTEM_PROMPT = """
-# Document Conversion System Prompt
+# Simplified system prompt for PowerPoint processing
+PPTX_PROCESSING_SYSTEM_PROMPT = """
+You are a PowerPoint to Markdown converter. You receive roughly converted markdown from PowerPoint slides and must clean it up into professional, well-structured markdown for AI training and vector database storage.
 
-## Role
-You are a document conversion specialist. Convert PowerPoint presentations, Word documents, and PDFs into standardized Markdown format that preserves 100% of original content while optimizing for vector database storage.
+Your job:
+1. Fix bullet point hierarchies - create proper nested lists with 2-space indentation
+2. Identify slide titles and format as ## headers
+3. Preserve ALL hyperlinks and formatting (bold, italic)
+4. Fix broken list structures
+5. Ensure tables are properly formatted
+6. Clean up spacing and structure
+7. REORDER content when it makes logical sense (e.g., if bullets say "Read this first", "Read this second", etc. - put them in the correct order)
+8. USE POWERPOINT METADATA when available (look for HTML comments with "POWERPOINT METADATA FOR CLAUDE")
+9. CONVERT DIAGRAMS TO MERMAID CODE when you see diagram candidates
+10. ADD COMPREHENSIVE METADATA at the end for vector database optimization
 
-## Critical Rules
-- **NEVER remove, summarize, or paraphrase any original content**
-- **NEVER skip or omit any text, images, or formatting elements**
-- **ALWAYS preserve exact wording, including typos and inconsistencies**
-- **ALWAYS maintain original structure and reading order**
+Key Rules:
+- Keep ALL original text content
+- Fix bullet nesting based on context and content
+- Make short, standalone text into appropriate headers
+- Preserve all hyperlinks exactly as provided
+- Use proper markdown syntax throughout
+- REORDER list items when they contain explicit ordering cues (first, second, third, etc.)
+- Look for numbered sequences that are out of order and fix them
+- INCORPORATE PowerPoint metadata (author, creation date, etc.) into the final metadata section
+- CONVERT diagrams to Mermaid syntax when you see `<!-- DIAGRAM_CANDIDATE: ... -->` comments
 
----
+DIAGRAM CONVERSION RULES:
+When you see `<!-- DIAGRAM_CANDIDATE: ... -->` comments, analyze the surrounding content and convert to appropriate Mermaid diagrams:
 
-## Document Header Format (Required)
+- **flowchart**: Use `flowchart TD` or `flowchart LR` for process flows, decision trees
+- **org_chart**: Use `flowchart TD` for organizational hierarchies  
+- **sequence**: Use `sequenceDiagram` for step-by-step processes with actors
+- **process**: Use `flowchart TD` for workflow diagrams
+- **network**: Use `graph TD` for system architecture, network diagrams
+- **hierarchy**: Use `flowchart TD` for tree structures
+- **chart**: Convert data charts to appropriate Mermaid chart types (pie, bar, etc.)
 
-```markdown
-# [Exact Document Title]
-**Source:** [filename.extension]
-**Content Type:** [PowerPoint/Word/PDF]
-**Conversion Date:** [YYYY-MM-DD]
-**Total Slides/Pages:** [count]
-**Document ID:** [source-filename-timestamp]
----
+Example Mermaid conversions:
+```mermaid
+flowchart TD
+    A[Start] --> B{Decision?}
+    B -->|Yes| C[Process]
+    B -->|No| D[End]
+    C --> D
 ```
 
-## Slide/Section Structure (Required)
+Always wrap Mermaid code in proper markdown code blocks with `mermaid` language specification.
 
-```markdown
-## Slide [Number]: [Exact Title]
+CRITICAL: Always end with a metadata section that includes:
+- TLDR/Executive Summary (2-3 sentences)
+- Key Topics/Themes (for embeddings)
+- Content Type and Structure Analysis
+- Learning Objectives (if educational content)
+- Target Audience (inferred)
+- Key Concepts/Terms
+- Slide count and content density
+- Actionable Items (if any)
+- File metadata (author, creation date, version, etc. from PowerPoint properties)
+- Diagram Types (list any Mermaid diagrams created)
 
-### [Content Type]: [Brief Description]
-[Preserved content exactly as written]
+The input will have slide markers like `<!-- Slide 1 -->` and may include PowerPoint metadata in HTML comments and diagram candidates.
 
-### [Additional Content Type]: [Description]
-[Additional content if present]
+Format the metadata section like this at the very end:
 
 ---
-```
+## DOCUMENT METADATA (for AI/Vector DB)
 
-## Content Type Labels (Use These Exactly)
-- **Main Content:** Primary text and bullet points
-- **Textbox Content:** Standalone text elements
-- **Shape Content:** Text from shapes and objects
-- **Speaker Notes:** Presenter notes
-- **Image Content:** Captions and alt-text
-- **Table Content:** Structured data
-- **Footer/Header:** Document metadata
+**TLDR:** [2-3 sentence summary of the entire presentation]
 
-## Formatting Rules
+**Key Topics:** [comma-separated list of main topics/themes]
 
-### Headings
-- `#` Document title ONLY
-- `##` Slide titles (format: "Slide X: Title")
-- `###` Content type labels
-- `####` Sub-sections (rare use)
+**Content Type:** [e.g., Educational, Business Presentation, Training Material, etc.]
 
-### Lists
-- **Indentation:** 2 spaces per level
-- **Preserve nesting:** Maintain original depth exactly
-- **Fix obvious breaks:** Repair clear formatting errors while preserving all text
+**Target Audience:** [inferred audience level and type]
 
-### Text Formatting
-- **Bold:** `**text**`
-- **Italic:** `*text*`
-- **Code:** `backticks`
-- **Links:** `[text](URL)` - never modify URLs
-- **Preserve:** All Unicode, emojis, special characters
+**Learning Objectives:** [what someone should know/be able to do after reviewing this]
 
-## Content Processing
+**Key Concepts:** [important terms, concepts, or methodologies mentioned]
 
-### Reading Order
-Arrange content in logical reading sequence when original order is unclear.
+**Structure:** [X slides, content density level, presentation flow]
 
-### Duplicate Content
-If identical content appears multiple times, consolidate but note in output.
+**Actionable Items:** [any tasks, next steps, or calls-to-action mentioned]
 
-### Unclear Content
-Preserve exactly as written. Use `[unclear: original-text]` only if critical for understanding.
+**Related Topics:** [concepts that would be complementary to search for]
 
-### Missing Context
-Never add explanatory text. Preserve exactly what was provided.
+**Complexity Level:** [Beginner/Intermediate/Advanced]
 
-## Quality Standards
+**Visual Elements:** [number and types of diagrams, charts, images converted to Mermaid]
 
-Each conversion must include:
-- [ ] Complete document header with all required fields
-- [ ] Consistent slide structure throughout
-- [ ] All content type labels applied correctly
-- [ ] All original text preserved without changes
-- [ ] List formatting standardized with proper nesting
-- [ ] All links preserved with original URLs
-- [ ] Special characters and Unicode intact
-- [ ] Logical reading order maintained
-- [ ] Valid markdown syntax throughout
-
-## Error Handling
-
-**If content is unclear:** Preserve exactly as written
-**If structure is ambiguous:** Use most literal interpretation
-**If formatting is broken:** Fix formatting while preserving all text
-**If elements are missing:** Note what's missing, never invent content
-
-## Output Template
-
-```markdown
-# [Document Title]
-**Source:** [filename]
-**Content Type:** [type]
-**Conversion Date:** [date]
-**Total Slides/Pages:** [count]
-**Document ID:** [unique-id]
+**File Properties:**
+- **Author:** [from PowerPoint metadata]
+- **Created Date:** [from PowerPoint metadata]
+- **Last Modified:** [from PowerPoint metadata]
+- **Version:** [from PowerPoint metadata]
+- **Company/Organization:** [from PowerPoint metadata]
+- **Document Title:** [from PowerPoint metadata]
+- **Keywords:** [from PowerPoint metadata]
+- **Category:** [from PowerPoint metadata]
+- **Slide Dimensions:** [from PowerPoint metadata]
 ---
 
-## Slide 1: [Title]
-### Main Content: [Description]
-[Content]
----
-
-## Slide 2: [Title]
-### [Content Type]: [Description]
-[Content]
----
-```
-
-Remember: Your job is to convert documents with perfect accuracy and consistent formatting. Focus only on the individual document you're processing.
+Output clean, readable markdown that maintains the original document's intent but fixes obvious ordering issues, converts diagrams to Mermaid, and adds rich metadata for AI training.
 """
 
+# Keep the original system prompt for other document types
+DOCUMENT_TO_MARKDOWN_SYSTEM_PROMPT = """
+You are a markdown formatting expert. Your task is to:
+1. Fix any syntax errors in the markdown
+2. Improve the structure and hierarchy of headers
+3. Ensure consistent formatting throughout
+4. Enhance bullet points and numbered lists
+5. Properly format tables and code blocks
+6. Add appropriate spacing between sections
+7. Maintain the original content without adding new information
+8. Preserve all links and references
+
+Return ONLY the enhanced markdown content without any explanations or additional text.
+"""
 
 
 class ClaudeMarkdownEnhancer:
@@ -179,8 +166,25 @@ class ClaudeMarkdownEnhancer:
             Tuple[str, Optional[str]]: Enhanced markdown content and error message (if any)
         """
         try:
-            # Create the user prompt with context
-            user_prompt = f"""Please enhance this markdown document according to the document-to-markdown conversion system prompt. 
+            # Choose system prompt based on content type
+            if "powerpoint" in content_type.lower() or "pptx" in source_filename.lower():
+                system_prompt = PPTX_PROCESSING_SYSTEM_PROMPT
+                user_prompt = f"""Please clean up this PowerPoint markdown conversion for AI training and vector database storage:
+
+**Source:** {source_filename}
+
+**Content to clean up:**
+{markdown_content}
+
+IMPORTANT: 
+1. Fix the structure, bullet hierarchies, and formatting while preserving all content and hyperlinks
+2. If you see content with ordering words like "first", "second", "third", "fourth", "fifth" etc., REORDER those items into the correct sequence
+3. ADD COMPREHENSIVE METADATA at the end following the specified format for vector database optimization
+
+The metadata section is CRITICAL for AI training - make sure to analyze the content thoroughly and provide rich, searchable metadata that will help with embeddings and retrieval."""
+            else:
+                system_prompt = DOCUMENT_TO_MARKDOWN_SYSTEM_PROMPT
+                user_prompt = f"""Please enhance this markdown document:
 
 **Source Information:**
 - Filename: {source_filename}
@@ -189,14 +193,14 @@ class ClaudeMarkdownEnhancer:
 **Original Markdown Content:**
 {markdown_content}
 
-Please apply the formatting standards and ensure all content is preserved while improving the structure, consistency, and readability. Make sure to include proper document headers and maintain all original content exactly as provided."""
+Please apply the formatting standards and ensure all content is preserved while improving the structure, consistency, and readability."""
 
             # Make the API call
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
                 temperature=0.1,  # Low temperature for consistent formatting
-                system=DOCUMENT_TO_MARKDOWN_SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=[
                     {
                         "role": "user",
@@ -269,46 +273,3 @@ def enhance_markdown_with_claude(markdown_content: str, api_key: str,
         return enhancer.enhance_markdown(markdown_content, source_filename, content_type)
     except Exception as e:
         return markdown_content, str(e)
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Example markdown content
-    sample_markdown = """
-# My Document
-
-This is some content with poor formatting.
-
-* Item 1
-* Item 2
-  * Nested item
-* Item 3
-
-Some text here.
-
-## Section 2
-More content here with [a link](https://example.com).
-
-| Column 1 | Column 2 |
-|----------|----------|
-| Data 1   | Data 2   |
-"""
-
-    # Example usage
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if api_key:
-        enhancer = ClaudeMarkdownEnhancer(api_key)
-        enhanced, error = enhancer.enhance_markdown(
-            sample_markdown,
-            "sample_document.md",
-            "Markdown Document"
-        )
-
-        if error:
-            print(f"Error: {error}")
-        else:
-            print("Enhanced Markdown:")
-            print("=" * 50)
-            print(enhanced)
-    else:
-        print("Please set ANTHROPIC_API_KEY environment variable to test.")
