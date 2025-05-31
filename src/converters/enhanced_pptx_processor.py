@@ -1,12 +1,13 @@
 """
-Enhanced PowerPoint Processor Module
+Enhanced PowerPoint Processor Module with Improved Nested Bullet Support
 
 This module provides PowerPoint processing that preserves formatting, detects hierarchy,
-extracts images, tables, and all shape content with slide separators.
+extracts images, tables, and all shape content with improved nested bullet point handling.
 """
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from collections import defaultdict
 from pptx.enum.text import PP_PARAGRAPH_ALIGNMENT
 import re
 
@@ -14,12 +15,6 @@ import re
 def convert_pptx_to_markdown_enhanced(file_path):
     """
     Convert a PowerPoint file to markdown with comprehensive feature extraction.
-
-    Args:
-        file_path (str): Path to the PowerPoint file
-
-    Returns:
-        str: Markdown formatted content with slide separators
     """
     try:
         prs = Presentation(file_path)
@@ -51,7 +46,7 @@ def extract_slide_content(slide, slide_number):
         if hasattr(shape, 'top') and hasattr(shape, 'left'):
             positioned_shapes.append((shape.top, shape.left, shape))
         else:
-            positioned_shapes.append((0, 0, shape))  # Fallback position
+            positioned_shapes.append((0, 0, shape))
 
     # Sort by top position, then left position for proper reading order
     positioned_shapes.sort(key=lambda x: (x[0], x[1]))
@@ -76,8 +71,8 @@ def extract_shape_content(shape):
         elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
             return extract_group_content(shape)
         elif hasattr(shape, 'text_frame') and shape.text_frame:
-            # Get text content with inline hyperlinks
-            text_content = extract_text_frame_content(shape.text_frame, get_shape_context(shape))
+            # Get text content with inline hyperlinks and enhanced bullet handling
+            text_content = extract_text_frame_content_enhanced(shape.text_frame, get_shape_context(shape))
 
             # Also check for shape-level hyperlinks (click actions)
             shape_hyperlink = extract_shape_hyperlink(shape)
@@ -112,6 +107,282 @@ def extract_shape_content(shape):
     return ""
 
 
+def extract_text_frame_content_enhanced(text_frame, context="unknown"):
+    """Enhanced version using robust bullet detection for content placeholders."""
+    if not text_frame or not text_frame.paragraphs:
+        return ""
+
+    # Use robust processing for content placeholders
+    if context in ["content", "unknown"]:
+        return process_content_placeholder_enhanced(text_frame, context)
+    else:
+        # Use simpler processing for titles and other contexts
+        paragraphs = []
+        for para_idx, paragraph in enumerate(text_frame.paragraphs):
+            if not paragraph.text.strip():
+                continue
+
+            para_content = extract_paragraph_content_enhanced(
+                paragraph, context, para_idx, text_frame.paragraphs
+            )
+
+            if para_content.strip():
+                paragraphs.append(para_content)
+
+        return "\n".join(paragraphs)
+
+
+def extract_paragraph_content_enhanced(paragraph, context="unknown", para_idx=0, all_paragraphs=None):
+    """Enhanced paragraph processing with better nested bullet detection."""
+    if not paragraph.runs:
+        return ""
+
+    raw_text = paragraph.text.strip()
+    if not raw_text:
+        return ""
+
+    # Get bullet level using multiple detection methods
+    bullet_level = detect_bullet_level_enhanced(paragraph, raw_text)
+
+    if bullet_level >= 0:
+        return format_bullet_item_enhanced(paragraph, bullet_level)
+
+    # Check for numbered lists
+    if is_numbered_list_enhanced(paragraph):
+        return format_numbered_item_enhanced(paragraph)
+
+    # Extract formatted text with inline formatting
+    formatted_text = extract_formatted_text(paragraph.runs)
+    if not formatted_text.strip():
+        return ""
+
+    # Apply hierarchy formatting for non-list content
+    return apply_hierarchy_formatting(formatted_text, paragraph, context)
+
+
+def detect_bullet_level_enhanced(paragraph, raw_text):
+    """Enhanced bullet level detection using multiple methods."""
+
+    # Method 1: Use PowerPoint's native level property
+    level = get_powerpoint_bullet_level(paragraph)
+    if level >= 0:
+        return level
+
+    # Method 2: Detect from XML bullet formatting
+    xml_level = get_xml_bullet_level(paragraph)
+    if xml_level >= 0:
+        return xml_level
+
+    # Method 3: Detect from indentation and bullet characters
+    indent_level = get_indentation_bullet_level(paragraph, raw_text)
+    if indent_level >= 0:
+        return indent_level
+
+    # Method 4: Detect from manual bullet characters
+    char_level = get_character_bullet_level(raw_text)
+    if char_level >= 0:
+        return char_level
+
+    return -1  # Not a bullet point
+
+
+def get_powerpoint_bullet_level(paragraph):
+    """Get bullet level from PowerPoint's native properties."""
+    try:
+        # Check if paragraph has a defined level
+        if hasattr(paragraph, 'level') and paragraph.level is not None:
+            # Verify it's actually a bullet by checking for bullet formatting
+            if has_bullet_formatting(paragraph):
+                return paragraph.level
+
+        # Some paragraphs might have bullet formatting but no explicit level
+        if has_bullet_formatting(paragraph):
+            return 0  # Default to level 0 if we know it's a bullet
+
+    except Exception:
+        pass
+
+    return -1
+
+
+def has_bullet_formatting(paragraph):
+    """Check if paragraph has actual bullet formatting."""
+    try:
+        # Method 1: Check XML for bullet indicators
+        if hasattr(paragraph, '_p') and paragraph._p is not None:
+            xml_str = str(paragraph._p.xml) if hasattr(paragraph._p, 'xml') else ""
+            bullet_indicators = ['buChar', 'buAutoNum', 'buFont', 'buNone="0"']
+            if any(indicator in xml_str for indicator in bullet_indicators):
+                return True
+
+        # Method 2: Check paragraph properties
+        if hasattr(paragraph, '_element'):
+            # Look for bullet-related elements in the paragraph properties
+            pPr = getattr(paragraph._element, 'pPr', None)
+            if pPr is not None:
+                # Check for bullet number or character properties
+                for child in pPr:
+                    tag_name = getattr(child, 'tag', '').lower()
+                    if any(bullet in tag_name for bullet in ['buchar', 'buautonum', 'bufont']):
+                        return True
+
+    except Exception:
+        pass
+
+    return False
+
+
+def get_xml_bullet_level(paragraph):
+    """Extract bullet level from XML properties."""
+    try:
+        if hasattr(paragraph, '_element') and paragraph._element is not None:
+            # Look for level indicators in XML
+            pPr = getattr(paragraph._element, 'pPr', None)
+            if pPr is not None:
+                for child in pPr:
+                    # Check for level attribute
+                    if hasattr(child, 'attrib') and 'lvl' in child.attrib:
+                        level = int(child.attrib['lvl'])
+                        if has_bullet_formatting(paragraph):
+                            return level
+
+                    # Check for margin-based level detection
+                    if hasattr(child, 'attrib') and 'marL' in child.attrib:
+                        margin = int(child.attrib.get('marL', 0))
+                        if margin > 0 and has_bullet_formatting(paragraph):
+                            # Convert margin to level (rough estimation)
+                            return margin // 360000  # PowerPoint units conversion
+
+    except Exception:
+        pass
+
+    return -1
+
+
+def get_indentation_bullet_level(paragraph, raw_text):
+    """Detect bullet level from text indentation patterns."""
+    try:
+        # Get the original text with leading spaces
+        original_text = paragraph.text
+        leading_spaces = len(original_text) - len(original_text.lstrip(' '))
+
+        # Check if text has bullet-like characteristics
+        if has_bullet_like_text(raw_text):
+            if leading_spaces == 0:
+                return 0
+            else:
+                # Estimate level from indentation (assuming 2-4 spaces per level)
+                return min(leading_spaces // 2, 5)  # Cap at 5 levels
+
+    except Exception:
+        pass
+
+    return -1
+
+
+def get_character_bullet_level(raw_text):
+    """Detect bullet level from bullet characters in text."""
+    bullet_chars = {
+        '•': 0,  # Primary bullet
+        '◦': 1,  # Secondary bullet
+        '▪': 1,  # Secondary bullet
+        '▫': 2,  # Tertiary bullet
+        '‣': 1,  # Secondary bullet
+        '·': 1,  # Secondary bullet
+        '-': 0,  # Primary bullet (dash)
+        '*': 0,  # Primary bullet (asterisk)
+    }
+
+    if raw_text and raw_text[0] in bullet_chars:
+        return bullet_chars[raw_text[0]]
+
+    return -1
+
+
+def has_bullet_like_text(text):
+    """Check if text starts with bullet-like characters."""
+    if not text:
+        return False
+
+    bullet_chars = ['•', '◦', '▪', '▫', '‣', '·', '-', '*']
+    return text[0] in bullet_chars
+
+
+def format_bullet_item_enhanced(paragraph, level):
+    """Enhanced bullet formatting with better text extraction."""
+    # Extract formatted text while preserving inline formatting
+    formatted_text = extract_formatted_text(paragraph.runs)
+
+    # Remove existing bullet characters from the beginning
+    cleaned_text = remove_bullet_chars(formatted_text)
+
+    # Ensure level is reasonable
+    level = max(0, min(level, 5))  # Cap between 0 and 5
+
+    # Create proper markdown bullet with indentation
+    indent = "  " * level
+    return f"{indent}- {cleaned_text}"
+
+
+def remove_bullet_chars(text):
+    """Remove bullet characters from the beginning of text."""
+    if not text:
+        return text
+
+    # Remove various bullet characters and any following whitespace
+    bullet_pattern = r'^[•◦▪▫‣·\-*]\s*'
+    return re.sub(bullet_pattern, '', text)
+
+
+def is_numbered_list_enhanced(paragraph):
+    """Enhanced numbered list detection."""
+    text = paragraph.text.strip()
+    if not text:
+        return False
+
+    # Expanded patterns for numbered lists
+    numbered_patterns = [
+        r'^\d+[\.\)]\s',  # 1. or 1)
+        r'^[a-z][\.\)]\s',  # a. or a)
+        r'^[A-Z][\.\)]\s',  # A. or A)
+        r'^[ivxlcdm]+[\.\)]\s',  # i. ii. iii. (roman numerals)
+        r'^\([0-9a-zA-Z]+\)\s',  # (1) or (a)
+        r'^\d+\.\d+[\.\)]\s',  # 1.1. or 1.1)
+    ]
+
+    for pattern in numbered_patterns:
+        if re.match(pattern, text, re.IGNORECASE):
+            return True
+
+    return False
+
+
+def format_numbered_item_enhanced(paragraph):
+    """Enhanced numbered list formatting."""
+    formatted_text = extract_formatted_text(paragraph.runs)
+
+    # Try to determine the numbering level from indentation or formatting
+    level = 0
+    try:
+        if hasattr(paragraph, 'level') and paragraph.level is not None:
+            level = paragraph.level
+        else:
+            # Estimate level from indentation
+            original_text = paragraph.text
+            leading_spaces = len(original_text) - len(original_text.lstrip(' '))
+            if leading_spaces > 0:
+                level = leading_spaces // 4  # Assume 4 spaces per level for numbered lists
+    except:
+        pass
+
+    # Apply indentation for nested numbered lists
+    indent = "   " * level  # 3 spaces for numbered list indentation
+
+    # For markdown compatibility, use "1." for all numbered items
+    return f"{indent}1. {formatted_text}"
+
+
+# Keep all the existing functions that are working well
 def extract_shape_hyperlink(shape):
     """Extract hyperlink from shape click actions."""
     try:
@@ -208,369 +479,6 @@ def extract_group_content(group_shape):
         pass
 
     return "\n\n".join(content_parts)
-
-
-def extract_text_frame_content(text_frame, context="unknown"):
-    """Extract content from a text frame with hierarchy detection."""
-    if not text_frame or not text_frame.paragraphs:
-        return ""
-
-    # First, let's check if this looks like a manually formatted list
-    # by looking at all paragraphs together
-    all_paragraphs = []
-    for paragraph in text_frame.paragraphs:
-        original_text = paragraph.text
-        if original_text:  # Include empty lines
-            all_paragraphs.append((paragraph, original_text))
-
-    # Check if this might be a manual list in a text box
-    is_manual_list = False
-    for i, (para, text) in enumerate(all_paragraphs):
-        stripped = text.strip()
-        # Look for patterns that indicate a manual list
-        if stripped.endswith(':') and i + 1 < len(all_paragraphs):
-            # Check if next lines have consistent indentation
-            next_text = all_paragraphs[i + 1][1]
-            if next_text and not next_text.startswith(' '):
-                # Might be starting a manual list
-                is_manual_list = True
-                break
-
-    paragraphs = []
-    list_base_indent = None
-    in_manual_list = False
-
-    for para_idx, (paragraph, original_text) in enumerate(all_paragraphs):
-        stripped_text = original_text.strip()
-
-        if not stripped_text:
-            continue
-
-        # Count leading spaces
-        leading_spaces = len(original_text) - len(original_text.lstrip(' '))
-
-        # Check if we're entering a manual list section
-        if is_manual_list and stripped_text.endswith(':'):
-            # This is probably a list header like "Unordered Lists:"
-            in_manual_list = True
-            list_base_indent = None
-            paragraphs.append(f"### {stripped_text}")
-            continue
-
-        # If we're in a manual list, handle indentation-based nesting
-        if in_manual_list:
-            # First item in the list sets the base indentation
-            if list_base_indent is None and leading_spaces == 0:
-                list_base_indent = 0
-
-            # Check if we're ending the list (non-indented line that's not a list item)
-            if leading_spaces == 0 and not any(char in stripped_text for char in [':', '•', '-', '*']):
-                # Check if this might be another list item at base level
-                if not any(phrase in stripped_text.lower() for phrase in ['level', 'item', 'nested']):
-                    in_manual_list = False
-                    list_base_indent = None
-
-            if in_manual_list:
-                # Calculate nesting level based on indentation
-                if leading_spaces == 0:
-                    level = 0
-                else:
-                    # Assuming 2 spaces per indent level
-                    level = leading_spaces // 2
-
-                # Format as a bullet item
-                indent = "  " * level
-                formatted_text = extract_formatted_text(paragraph.runs)
-                paragraphs.append(f"{indent}- {formatted_text}")
-                continue
-
-        # Normal paragraph processing
-        para_content = extract_paragraph_content(paragraph, context, False)
-        if para_content.strip():
-            paragraphs.append(para_content)
-
-    return "\n".join(paragraphs)
-
-
-def extract_paragraph_content(paragraph, context="unknown", in_list_context=False):
-    """Extract content from a paragraph with proper hierarchy and list detection."""
-    if not paragraph.runs:
-        return ""
-
-    # Get the original text with leading spaces
-    original_text = paragraph.text
-    raw_text = original_text.strip()
-    if not raw_text:
-        return ""
-
-    # Count leading spaces for indentation
-    leading_spaces = len(original_text) - len(original_text.lstrip(' '))
-
-    # Check for numbered lists first
-    if is_numbered_list(paragraph):
-        return format_numbered_item(paragraph)
-
-    # Check for bullet points (PowerPoint formatted)
-    if is_bullet_point(paragraph):
-        return format_bullet_item(paragraph)
-
-    # Check for manual bullet characters (typed in text boxes)
-    if raw_text and raw_text[0] in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']:
-        return format_manual_bullet_item(paragraph, raw_text, leading_spaces)
-
-    # Check if this is an indented line in a list context
-    if in_list_context and leading_spaces > 0:
-        # This is a nested item without a bullet character
-        level = max(1, leading_spaces // 2)  # Assume 2 spaces per level
-        formatted_text = extract_formatted_text(paragraph.runs)
-        indent = "  " * level
-        return f"{indent}- {formatted_text}"
-
-    # Extract formatted text
-    formatted_text = extract_formatted_text(paragraph.runs)
-    if not formatted_text.strip():
-        return ""
-
-    # Apply hierarchy formatting
-    return apply_hierarchy_formatting(formatted_text, paragraph, context)
-
-
-def format_manual_bullet_item(paragraph, raw_text, leading_spaces=0):
-    """Format a manually typed bullet item."""
-    # Remove the bullet character
-    text = raw_text[1:].lstrip()
-
-    # Apply formatting to the text
-    formatted_text = extract_formatted_text(paragraph.runs)
-    # Remove bullet from formatted text as well
-    bullet_chars = ['•', '·', '-', '*', '◦', '▪', '▫', '‣']
-    for char in bullet_chars:
-        if formatted_text.startswith(char):
-            formatted_text = formatted_text[1:].lstrip()
-            break
-
-    # Use the leading spaces to determine level
-    level = leading_spaces // 2 if leading_spaces > 0 else 0
-
-    indent = "  " * level
-    return f"{indent}- {formatted_text}"
-
-
-def format_nested_bullet_item(paragraph, raw_text, leading_spaces):
-    """Format a nested bullet item that doesn't have an explicit bullet character."""
-    # Determine nesting level from leading spaces
-    level = max(1, leading_spaces // 2)  # At least level 1 for nested items
-
-    # Get formatted text
-    formatted_text = extract_formatted_text(paragraph.runs)
-
-    indent = "  " * level
-    return f"{indent}- {formatted_text}"
-
-
-def is_numbered_list(paragraph):
-    """Detect if paragraph is a numbered list."""
-    text = paragraph.text.strip()
-    if not text:
-        return False
-
-    # Patterns for numbered lists
-    numbered_patterns = [
-        r'^\d+[\.\)]\s',  # 1. or 1)
-        r'^[a-z][\.\)]\s',  # a. or a)
-        r'^[A-Z][\.\)]\s',  # A. or A)
-        r'^[ivxlcdm]+[\.\)]\s',  # i. ii. iii. (roman numerals)
-        r'^\([0-9a-zA-Z]+\)\s',  # (1) or (a)
-    ]
-
-    for pattern in numbered_patterns:
-        if re.match(pattern, text):
-            return True
-
-    return False
-
-
-def format_numbered_item(paragraph):
-    """Format a numbered list item."""
-    text = extract_formatted_text(paragraph.runs)
-
-    # Get indentation level
-    level = paragraph.level if paragraph.level is not None else 0
-    indent = "   " * level  # 3 spaces for numbered list indentation
-
-    # For markdown, we'll use "1." for all numbered items
-    return f"{indent}1. {text}"
-
-
-def is_bullet_point(paragraph):
-    """Detect if paragraph is a bullet point."""
-    try:
-        # Check paragraph level (bullet points usually have level >= 0)
-        if paragraph.level is not None and paragraph.level >= 0:
-            # Check for bullet formatting in XML
-            if hasattr(paragraph, '_p') and paragraph._p is not None:
-                xml_str = str(paragraph._p.xml) if hasattr(paragraph._p, 'xml') else ""
-                if any(bullet in xml_str for bullet in ['buChar', 'buAutoNum', 'buFont']):
-                    return True
-
-        # Check if text starts with bullet characters
-        text = paragraph.text.strip()
-        if text and text[0] in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']:
-            return True
-
-    except:
-        pass
-
-    return False
-
-
-def format_bullet_item(paragraph):
-    """Format a bullet point item with improved level detection."""
-    text = extract_formatted_text(paragraph.runs)
-
-    # Remove existing bullet characters from the beginning
-    text = re.sub(r'^[•·\-*◦▪▫‣]\s*', '', text)
-
-    # Get indentation level - try multiple methods
-    level = 0
-
-    # Method 1: Use paragraph.level if available
-    if paragraph.level is not None and paragraph.level >= 0:
-        level = paragraph.level
-    else:
-        # Method 2: Try to detect indentation from formatting
-        try:
-            if hasattr(paragraph, '_element') and paragraph._element is not None:
-                pPr = paragraph._element.pPr if hasattr(paragraph._element, 'pPr') else None
-                if pPr is not None:
-                    # Look for indentation markers
-                    for child in pPr:
-                        if hasattr(child, 'attrib'):
-                            if 'marL' in child.attrib:
-                                # Convert margin to approximate level
-                                margin = int(child.attrib.get('marL', 0))
-                                level = margin // 360000  # Rough conversion
-                            elif 'lvl' in child.attrib:
-                                level = int(child.attrib.get('lvl', 0))
-        except:
-            pass
-
-        # Method 3: Detect from original text indentation patterns
-        original_text = paragraph.text
-        if original_text.startswith('  '):
-            # Count leading spaces to estimate level
-            leading_spaces = len(original_text) - len(original_text.lstrip(' '))
-            level = leading_spaces // 2  # Assume 2 spaces per level
-
-    # Ensure level is reasonable
-    level = max(0, min(level, 5))  # Cap at 5 levels
-
-    # Create proper markdown bullet with indentation
-    indent = "  " * level
-    return f"{indent}- {text}"
-
-
-def apply_hierarchy_formatting(text, paragraph, context):
-    """Apply hierarchy formatting (headers) based on context and text properties."""
-
-    # Don't apply header formatting to list-related content
-    stripped_text = text.strip()
-    if any(phrase in stripped_text.lower() for phrase in [
-        'first level', 'second level', 'third level', 'another', 'back to',
-        'sub-item', 'nested', 'bullet under'
-    ]):
-        return text
-
-    # Check if this should be a title (h1)
-    if context == "title" or is_likely_title(text, paragraph, context):
-        return f"# {text}"
-
-    # Check if this should be a header
-    header_level = detect_header_level(text, paragraph, context)
-    if header_level > 0:
-        return f"{'#' * header_level} {text}"
-
-    # Regular paragraph
-    return text
-
-
-def is_likely_title(text, paragraph, context):
-    """Determine if text should be treated as a main title."""
-    # Explicit title context
-    if context == "title":
-        return True
-
-    # Don't make list items into titles
-    if text.strip() and text.strip()[0] in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']:
-        return False
-
-    # Short text that's all caps AND not in a list
-    if len(text) < 80 and text.isupper() and len(text) > 3:
-        # But not if it looks like a list item description
-        if any(phrase in text.upper() for phrase in
-               ['FIRST LEVEL', 'SECOND LEVEL', 'THIRD LEVEL', 'ANOTHER', 'BACK TO']):
-            return False
-        return True
-
-    # Check if it's the first significant text and relatively short
-    if len(text) < 60 and context in ["unknown", "content"]:
-        # Additional checks for title-like properties
-        try:
-            if paragraph.runs and len(paragraph.runs) > 0:
-                first_run = paragraph.runs[0]
-                if hasattr(first_run.font, 'size') and first_run.font.size:
-                    # If font size is significantly large, it might be a title
-                    # This is a heuristic - you might need to adjust based on your needs
-                    return True
-        except:
-            pass
-
-    return False
-
-
-def detect_header_level(text, paragraph, context):
-    """Detect if text should be a header and what level."""
-
-    # Don't make headers if text is too long
-    if len(text) > 120:
-        return 0
-
-    # Don't make headers out of list items
-    stripped_text = text.strip()
-    if any(phrase in stripped_text.lower() for phrase in [
-        'first level', 'second level', 'third level', 'another', 'back to',
-        'sub-item', 'nested', 'bullet under', 'numbered item'
-    ]):
-        return 0
-
-    # Check for explicit header context
-    if context == "header":
-        return 2
-
-    # Only check for headers that end with ':' and look like section headers
-    if stripped_text.endswith(':') and len(stripped_text) < 50:
-        # This might be a section header like "Unordered Lists:" or "Mixed Lists:"
-        if any(word in stripped_text for word in ['Lists', 'Examples', 'Section', 'Part']):
-            return 3
-
-    # Check for text properties that suggest header
-    try:
-        if paragraph.runs and len(paragraph.runs) > 0:
-            first_run = paragraph.runs[0]
-
-            # Check if text is bold and relatively short
-            if hasattr(first_run.font, 'bold') and first_run.font.bold and len(text) < 80:
-                # But not if it's a list item
-                if not any(char in text for char in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']):
-                    # Determine header level based on length and other factors
-                    if len(text) < 40:
-                        return 3  # h3 for short bold text
-                    else:
-                        return 2  # h2 for longer bold text
-    except:
-        pass
-
-    return 0  # Not a header
 
 
 def extract_formatted_text(runs):
@@ -721,6 +629,109 @@ def fix_url(url):
     return url
 
 
+def apply_hierarchy_formatting(text, paragraph, context):
+    """Apply hierarchy formatting (headers) based on context and text properties."""
+
+    # Don't apply header formatting to list-related content
+    stripped_text = text.strip()
+    if any(phrase in stripped_text.lower() for phrase in [
+        'first level', 'second level', 'third level', 'another', 'back to',
+        'sub-item', 'nested', 'bullet under'
+    ]):
+        return text
+
+    # Check if this should be a title (h1)
+    if context == "title" or is_likely_title(text, paragraph, context):
+        return f"# {text}"
+
+    # Check if this should be a header
+    header_level = detect_header_level(text, paragraph, context)
+    if header_level > 0:
+        return f"{'#' * header_level} {text}"
+
+    # Regular paragraph
+    return text
+
+
+def is_likely_title(text, paragraph, context):
+    """Determine if text should be treated as a main title."""
+    # Explicit title context
+    if context == "title":
+        return True
+
+    # Don't make list items into titles
+    if text.strip() and text.strip()[0] in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']:
+        return False
+
+    # Short text that's all caps AND not in a list
+    if len(text) < 80 and text.isupper() and len(text) > 3:
+        # But not if it looks like a list item description
+        if any(phrase in text.upper() for phrase in
+               ['FIRST LEVEL', 'SECOND LEVEL', 'THIRD LEVEL', 'ANOTHER', 'BACK TO']):
+            return False
+        return True
+
+    # Check if it's the first significant text and relatively short
+    if len(text) < 60 and context in ["unknown", "content"]:
+        # Additional checks for title-like properties
+        try:
+            if paragraph.runs and len(paragraph.runs) > 0:
+                first_run = paragraph.runs[0]
+                if hasattr(first_run.font, 'size') and first_run.font.size:
+                    # If font size is significantly large, it might be a title
+                    # This is a heuristic - you might need to adjust based on your needs
+                    return True
+        except:
+            pass
+
+    return False
+
+
+def detect_header_level(text, paragraph, context):
+    """Detect if text should be a header and what level."""
+
+    # Don't make headers if text is too long
+    if len(text) > 120:
+        return 0
+
+    # Don't make headers out of list items
+    stripped_text = text.strip()
+    if any(phrase in stripped_text.lower() for phrase in [
+        'first level', 'second level', 'third level', 'another', 'back to',
+        'sub-item', 'nested', 'bullet under', 'numbered item'
+    ]):
+        return 0
+
+    # Check for explicit header context
+    if context == "header":
+        return 2
+
+    # Only check for headers that end with ':' and look like section headers
+    if stripped_text.endswith(':') and len(stripped_text) < 50:
+        # This might be a section header like "Unordered Lists:" or "Mixed Lists:"
+        if any(word in stripped_text for word in ['Lists', 'Examples', 'Section', 'Part']):
+            return 3
+
+    # Check for text properties that suggest header
+    try:
+        if paragraph.runs and len(paragraph.runs) > 0:
+            first_run = paragraph.runs[0]
+
+            # Check if text is bold and relatively short
+            if hasattr(first_run.font, 'bold') and first_run.font.bold and len(text) < 80:
+                # But not if it's a list item
+                if not any(char in text for char in ['•', '·', '-', '*', '◦', '▪', '▫', '‣']):
+                    # Determine header level based on length and other factors
+                    if len(text) < 40:
+                        return 3  # h3 for short bold text
+                    else:
+                        return 2  # h2 for longer bold text
+    except:
+        pass
+
+    return 0  # Not a header
+
+
 def extract_table_content(table):
     """Extract table content in markdown format with formatting preservation."""
     if not table.rows:
@@ -771,3 +782,354 @@ def clean_text(text):
 
     # Don't normalize whitespace aggressively - only trim start/end
     return text.strip()
+
+
+# Debug functions for troubleshooting
+def debug_paragraph_properties(paragraph):
+    """Debug function to print paragraph properties for troubleshooting."""
+    print(f"Text: '{paragraph.text}'")
+    print(f"Level: {getattr(paragraph, 'level', 'None')}")
+
+    try:
+        if hasattr(paragraph, '_p') and paragraph._p is not None:
+            xml_str = str(paragraph._p.xml)[:200] + "..." if len(str(paragraph._p.xml)) > 200 else str(paragraph._p.xml)
+            print(f"XML snippet: {xml_str}")
+    except:
+        print("XML: Not accessible")
+
+    print("---")
+
+
+def test_bullet_detection(paragraph):
+    """Test function to see how different detection methods work."""
+    raw_text = paragraph.text.strip()
+
+    methods = {
+        "PowerPoint Level": get_powerpoint_bullet_level(paragraph),
+        "XML Level": get_xml_bullet_level(paragraph),
+        "Indentation Level": get_indentation_bullet_level(paragraph, raw_text),
+        "Character Level": get_character_bullet_level(raw_text),
+        "Final Level": detect_bullet_level_enhanced(paragraph, raw_text)
+    }
+
+    print(f"Text: '{raw_text}'")
+    for method, level in methods.items():
+        print(f"{method}: {level}")
+    print("---")
+
+    return methods["Final Level"]
+
+
+def process_content_placeholder_enhanced(text_frame, context="content"):
+    """Enhanced processing specifically for content placeholders with robust bullet detection."""
+    if not text_frame or not text_frame.paragraphs:
+        return ""
+
+    # First, analyze the entire text frame to understand its structure
+    structure_analysis = analyze_text_frame_structure(text_frame)
+
+    # Process paragraphs with the structure context
+    processed_paragraphs = []
+
+    for i, paragraph in enumerate(text_frame.paragraphs):
+        if not paragraph.text.strip():
+            continue
+
+        processed_para = process_paragraph_with_context(
+            paragraph, i, structure_analysis, context
+        )
+
+        if processed_para.strip():
+            processed_paragraphs.append(processed_para)
+
+    return "\n".join(processed_paragraphs)
+
+
+def analyze_text_frame_structure(text_frame):
+    """Analyze the entire text frame to understand bullet patterns and structure."""
+    analysis = {
+        'total_paragraphs': len(text_frame.paragraphs),
+        'bullet_paragraphs': [],
+        'level_distribution': defaultdict(int),
+        'bullet_styles': set(),
+        'has_mixed_content': False,
+        'predominant_pattern': None,
+        'bullet_indicators': []
+    }
+
+    bullet_indicators = []
+
+    for i, para in enumerate(text_frame.paragraphs):
+        text = para.text.strip()
+        if not text:
+            continue
+
+        # Comprehensive bullet detection for analysis
+        bullet_info = detect_all_bullet_indicators(para, text)
+
+        if bullet_info['is_bullet']:
+            analysis['bullet_paragraphs'].append(i)
+            analysis['level_distribution'][bullet_info['level']] += 1
+            analysis['bullet_styles'].add(bullet_info['style'])
+            bullet_indicators.append(bullet_info)
+        else:
+            # Check if this might be a continuation or non-bullet content
+            if bullet_indicators:  # We have bullets before this
+                analysis['has_mixed_content'] = True
+
+    analysis['bullet_indicators'] = bullet_indicators
+
+    # Determine the predominant pattern
+    if len(bullet_indicators) > 0:
+        if all(bi['method'] == 'powerpoint_native' for bi in bullet_indicators):
+            analysis['predominant_pattern'] = 'powerpoint_native'
+        elif all(bi['method'] == 'manual_typed' for bi in bullet_indicators):
+            analysis['predominant_pattern'] = 'manual_typed'
+        else:
+            analysis['predominant_pattern'] = 'mixed'
+
+    return analysis
+
+
+def detect_all_bullet_indicators(paragraph, text):
+    """Comprehensive bullet detection that checks all possible indicators."""
+    result = {
+        'is_bullet': False,
+        'level': 0,
+        'style': None,
+        'method': None,
+        'confidence': 0,
+        'original_text': text
+    }
+
+    # Method 1: PowerPoint Native Bullets (highest confidence)
+    native_result = detect_powerpoint_native_bullets(paragraph)
+    if native_result['is_bullet']:
+        result.update(native_result)
+        result['confidence'] = 100
+        return result
+
+    # Method 2: XML-based detection (high confidence) - use your existing function
+    if has_bullet_formatting(paragraph):
+        xml_level = get_xml_bullet_level(paragraph)
+        if xml_level >= 0:
+            result['is_bullet'] = True
+            result['level'] = xml_level
+            result['style'] = 'xml'
+            result['method'] = 'xml_analysis'
+            result['confidence'] = 90
+            return result
+
+    # Method 3: Manual typed bullets (medium confidence)
+    manual_result = detect_manual_bullets_robust(text)
+    if manual_result['is_bullet']:
+        result.update(manual_result)
+        result['confidence'] = 70
+        # Try to get level from indentation
+        indent_level = detect_indentation_level_robust(paragraph.text)
+        if indent_level > 0:
+            result['level'] = indent_level
+        return result
+
+    # Method 4: Pattern-based detection (low confidence)
+    if is_numbered_list_enhanced(paragraph):
+        result['is_bullet'] = True
+        result['level'] = 0
+        result['style'] = 'numbered'
+        result['method'] = 'pattern_based'
+        result['confidence'] = 50
+        return result
+
+    return result
+
+
+def detect_powerpoint_native_bullets(paragraph):
+    """Detect PowerPoint's native bullet formatting."""
+    result = {'is_bullet': False, 'level': 0, 'style': 'native', 'method': 'powerpoint_native'}
+
+    try:
+        # Check if paragraph has a level property
+        if hasattr(paragraph, 'level') and paragraph.level is not None:
+            # Verify it actually has bullet formatting
+            if has_bullet_formatting(paragraph):
+                result['is_bullet'] = True
+                result['level'] = paragraph.level
+                return result
+
+        # Sometimes level is None but it's still a bullet at level 0
+        if has_bullet_formatting(paragraph):
+            result['is_bullet'] = True
+            result['level'] = 0
+            return result
+
+    except Exception:
+        pass
+
+    return result
+
+
+def detect_manual_bullets_robust(text):
+    """Detect manually typed bullet characters."""
+    result = {'is_bullet': False, 'level': 0, 'style': 'manual', 'method': 'manual_typed'}
+
+    if not text:
+        return result
+
+    # Define bullet characters and their typical hierarchy
+    bullet_hierarchy = {
+        '•': 0,  # Primary bullet
+        '◦': 1,  # Secondary bullet (hollow)
+        '▪': 1,  # Secondary bullet (small square)
+        '▫': 2,  # Tertiary bullet (hollow square)
+        '‣': 1,  # Secondary bullet (triangular)
+        '·': 1,  # Secondary bullet (middle dot)
+        '○': 1,  # Secondary bullet (circle)
+        '■': 1,  # Secondary bullet (square)
+        '□': 2,  # Tertiary bullet (hollow square)
+        '→': 1,  # Arrow bullet
+        '►': 1,  # Arrow bullet
+        '✓': 1,  # Checkmark bullet
+        '✗': 1,  # X bullet
+        '-': 0,  # Dash bullet
+        '*': 0,  # Asterisk bullet
+        '+': 0,  # Plus bullet
+    }
+
+    first_char = text[0]
+    if first_char in bullet_hierarchy:
+        result['is_bullet'] = True
+        result['level'] = bullet_hierarchy[first_char]
+        result['style'] = f'manual_{first_char}'
+        return result
+
+    return result
+
+
+def detect_indentation_level_robust(text):
+    """Detect indentation level from the actual text."""
+    if not text:
+        return 0
+
+    # Count leading spaces
+    leading_spaces = len(text) - len(text.lstrip(' '))
+
+    # Count leading tabs (convert to equivalent spaces)
+    leading_tabs = len(text) - len(text.lstrip('\t'))
+    equivalent_spaces = leading_spaces + (leading_tabs * 4)
+
+    # Estimate level (assuming 2-4 spaces per level)
+    if equivalent_spaces == 0:
+        return 0
+    elif equivalent_spaces <= 4:
+        return 1
+    elif equivalent_spaces <= 8:
+        return 2
+    elif equivalent_spaces <= 12:
+        return 3
+    else:
+        return min(equivalent_spaces // 4, 5)  # Cap at 5 levels
+
+
+def process_paragraph_with_context(paragraph, para_index, structure_analysis, context):
+    """Process a paragraph with full context awareness."""
+    text = paragraph.text.strip()
+    if not text:
+        return ""
+
+    # Get comprehensive bullet information
+    bullet_info = detect_all_bullet_indicators(paragraph, text)
+
+    if bullet_info['is_bullet']:
+        return format_bullet_with_context(paragraph, bullet_info, structure_analysis)
+    else:
+        # Handle non-bullet content
+        formatted_text = extract_formatted_text(paragraph.runs)
+
+        # Apply appropriate formatting based on context
+        if context == "title" or is_likely_title_in_context(formatted_text, paragraph, para_index, structure_analysis):
+            return f"# {formatted_text}"
+        elif should_be_header_robust(formatted_text, paragraph, structure_analysis):
+            return f"## {formatted_text}"
+        else:
+            return formatted_text
+
+
+def format_bullet_with_context(paragraph, bullet_info, structure_analysis):
+    """Format a bullet point with full context awareness."""
+    # Extract the text content with formatting
+    formatted_text = extract_formatted_text(paragraph.runs)
+
+    # Remove bullet characters if they were manually typed
+    if bullet_info['method'] == 'manual_typed':
+        formatted_text = remove_leading_bullet_chars_robust(formatted_text)
+
+    # Adjust level based on structure analysis if needed
+    level = bullet_info['level']
+
+    # Handle inconsistent leveling in mixed content
+    if structure_analysis['predominant_pattern'] == 'mixed':
+        level = normalize_level_in_mixed_content(level, bullet_info, structure_analysis)
+
+    # Cap the level to prevent excessive indentation
+    level = max(0, min(level, 5))
+
+    # Create markdown bullet
+    indent = "  " * level
+    return f"{indent}- {formatted_text.strip()}"
+
+
+def remove_leading_bullet_chars_robust(text):
+    """Remove leading bullet characters and normalize spacing."""
+    if not text:
+        return text
+
+    # Remove various bullet characters and normalize spacing
+    bullet_pattern = r'^[•◦▪▫‣·○■□→►✓✗\-\*\+]\s*'
+    cleaned = re.sub(bullet_pattern, '', text)
+
+    # Also handle numbered patterns
+    numbered_pattern = r'^(?:\d+[\.\)]|\([0-9a-zA-Z]+\)|[a-zA-Z][\.\)]|\d+\.\d+[\.\)]|[ivx]+[\.\)])\s*'
+    cleaned = re.sub(numbered_pattern, '', cleaned, flags=re.IGNORECASE)
+
+    return cleaned.strip()
+
+
+def normalize_level_in_mixed_content(level, bullet_info, structure_analysis):
+    """Normalize bullet levels when dealing with mixed content patterns."""
+    # If we have mixed manual and native bullets, try to normalize
+    if bullet_info['method'] == 'manual_typed':
+        # Manual bullets often have incorrect levels, try to infer from indentation
+        return detect_indentation_level_robust(bullet_info.get('original_text', ''))
+
+    return level
+
+
+def is_likely_title_in_context(text, paragraph, para_index, structure_analysis):
+    """Determine if text should be treated as a title given the context."""
+    # First paragraph in content placeholder, short, and no bullets after
+    if para_index == 0 and len(text) < 100 and structure_analysis['bullet_paragraphs']:
+        return True
+
+    # All caps and short
+    if text.isupper() and len(text) < 80:
+        return True
+
+    return False
+
+
+def should_be_header_robust(text, paragraph, structure_analysis):
+    """Determine if text should be formatted as a header."""
+    # Short text that ends with colon (like "Key Points:")
+    if len(text) < 60 and text.endswith(':'):
+        return True
+
+    # Bold text that's relatively short
+    try:
+        if paragraph.runs and len(paragraph.runs) > 0:
+            first_run = paragraph.runs[0]
+            if hasattr(first_run.font, 'bold') and first_run.font.bold and len(text) < 80:
+                return True
+    except:
+        pass
+
+    return False
