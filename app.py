@@ -1,7 +1,7 @@
 """
-PowerPoint to Markdown Converter - Optimized for Claude Sonnet 4
+Document to Markdown Converter - Optimized for Claude Sonnet 4
 
-A Streamlit application specifically designed for converting PowerPoint presentations
+A Streamlit application for converting various document formats
 to clean, structured Markdown using Claude Sonnet 4's superior document processing capabilities.
 """
 
@@ -10,13 +10,15 @@ import os
 from src.converters.file_converter import convert_file_to_markdown
 from src.processors.folder_processor import process_folder
 from src.ui.components import setup_sidebar, get_supported_formats, setup_page_config
+from src.ui.about_tab import render_about_tab
+from src.content.features import get_main_features, get_feature_tagline, get_tool_description
 
 
-def setup_sidebar_with_claude():
+def setup_enhanced_sidebar():
     """Enhanced sidebar setup with Claude Sonnet 4 as the primary AI provider."""
     with st.sidebar:
-        st.header("PowerPoint to MD")
-        st.write("Claude-Powered Document Conversion")
+        st.header("Document to Markdown")
+        st.write("AI-Powered Document Conversion")
 
         # Supported formats in an expander
         with st.expander("Supported Formats"):
@@ -36,41 +38,53 @@ def setup_sidebar_with_claude():
                 help="Enter your Anthropic API key for Claude enhancement"
             )
 
-            # Show Claude advantages
-            st.info("🎯 Claude Sonnet 4 provides superior PowerPoint structure analysis, formatting preservation, and intelligent content organization!")
+            # Clear instructions for getting API key
+            if not api_key:
+                st.info("💡 **Need an API key?**")
+                st.markdown("""
+                1. Visit [console.anthropic.com](https://console.anthropic.com/)
+                2. Create an account or sign in
+                3. Generate a new API key
+                4. Paste it above to unlock AI enhancement
+                """)
+            else:
+                st.success("✅ Claude Sonnet 4 ready!")
 
         # Developer info
         st.sidebar.markdown("---")
         st.sidebar.markdown("""
         **Developed by:** James Taylor  
         **Powered by:** Claude Sonnet 4  
-        **Optimized for:** PowerPoint Presentations
         """)
 
     return enhance_markdown, api_key
 
 
-def handle_file_upload_enhanced(enhance_markdown, api_key):
-    """Enhanced file upload handler optimized for PowerPoint with Claude support."""
+def render_main_features():
+    """Render the main features section using content from features.py"""
+    st.markdown(get_tool_description())
+    st.markdown("")  # Add spacing
+
+    features = get_main_features()
+    feature_text = ""
+    for feature_key, feature_data in features.items():
+        feature_text += f"**{feature_data['icon']} {feature_data['title']}:** {feature_data['description']}  \n"
+
+    st.markdown(feature_text)
+
+
+def handle_file_upload(enhance_markdown, api_key):
+    """Handle file upload with enhanced processing."""
     # Get supported file extensions
     all_extensions = []
     formats = get_supported_formats()
     for category, info in formats.items():
         all_extensions.extend(info["extensions"])
 
-    # Enhanced info message
-    st.info(
-        "🚀 **PowerPoint Optimization Active!** "
-        "This application is specifically optimized for PowerPoint presentations. "
-        "While it supports other document formats, PowerPoint files (.pptx, .ppt) will receive "
-        "the best processing with advanced structure analysis, bullet point hierarchy, "
-        "and hyperlink extraction."
-    )
-
     uploaded_file = st.file_uploader(
-        "Select a file to convert (PowerPoint recommended)",
+        "Select a file to convert",
         type=all_extensions,
-        help="PowerPoint files (.pptx, .ppt) are optimized for best results"
+        help="Upload any supported document format for conversion"
     )
 
     # Convert button for file
@@ -78,13 +92,13 @@ def handle_file_upload_enhanced(enhance_markdown, api_key):
         if not uploaded_file:
             st.error("Please upload a file to convert")
         else:
-            with st.spinner("Converting to Markdown with Claude Sonnet 4..."):
+            with st.spinner("Converting to Markdown..."):
                 # Show progress bar
                 progress_bar = st.progress(0)
                 for percent_complete in range(100):
                     progress_bar.progress(percent_complete + 1)
 
-                # Convert uploaded file with Claude
+                # Convert uploaded file
                 markdown_content, error = convert_file_to_markdown(
                     uploaded_file.getbuffer(),
                     uploaded_file.name,
@@ -98,43 +112,36 @@ def handle_file_upload_enhanced(enhance_markdown, api_key):
                     st.session_state.markdown_content = markdown_content
                     st.session_state.file_name = uploaded_file.name
 
-                    # Show success message with Claude info
+                    # Show success message
                     if enhance_markdown and api_key:
                         st.success("✨ Conversion completed successfully with Claude Sonnet 4 enhancement!")
                     else:
-                        st.success("Conversion completed successfully!")
+                        st.success("✅ Conversion completed successfully!")
 
 
-def handle_folder_processing_enhanced(enhance_markdown, api_key):
-    """Enhanced batch folder processing optimized for PowerPoint files."""
+def handle_folder_processing(enhance_markdown, api_key):
+    """Handle batch folder processing."""
+    from src.ui.folder_picker import show_folder_picker, show_output_folder_picker
+
     st.info(
-        "🚀 Convert all supported files in a folder to markdown format using Claude Sonnet 4. "
-        "PowerPoint files will receive optimized processing with advanced formatting preservation."
+        "🚀 **Batch Processing:** Convert all supported files in a folder to markdown format. "
+        "Perfect for processing multiple documents at once."
     )
 
-    # Input folder selection
-    input_folder = st.text_input(
-        "Enter path to folder with files to convert",
-        placeholder="C:/Documents/MyPresentations",
-        help="Full path to the folder containing files to convert"
-    )
+    # Input folder selection with native picker
+    st.subheader("📂 Select Input Folder")
+    input_folder = show_folder_picker("input")
 
-    # Output folder selection (optional)
-    output_folder = st.text_input(
-        "Enter path to save markdown files (optional)",
-        placeholder="Leave empty to create 'markdown' subfolder",
-        help="Full path to save the converted markdown files. If left empty, files will be saved in a 'markdown' subfolder."
-    )
-
-    # Enhancement provider info
-    st.info("🎯 **Claude Sonnet 4 will be used for batch processing** - Expect superior document structure analysis and formatting!")
+    # Output folder selection (optional) with native picker
+    st.subheader("📁 Choose Output Location")
+    output_folder = show_output_folder_picker("output")
 
     # Process folder button
-    if st.button("Process Folder", key="process_folder"):
+    if st.button("🚀 Process Folder", key="process_folder", type="primary"):
         if not input_folder or not os.path.isdir(input_folder):
-            st.error("Please enter a valid folder path")
+            st.error("Please select a valid input folder using the Browse button above")
         else:
-            # Process the folder with Claude
+            # Process the folder
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -150,7 +157,7 @@ def handle_folder_processing_enhanced(enhance_markdown, api_key):
                 # Process files with progress updates
                 for progress, status in folder_processor:
                     progress_bar.progress(min(1.0, progress))
-                    status_text.text(f"{status} (using Claude Sonnet 4)")
+                    status_text.text(status)
 
                 # Get final results
                 success_count, error_count, errors = next(folder_processor)
@@ -160,12 +167,13 @@ def handle_folder_processing_enhanced(enhance_markdown, api_key):
                     "success_count": success_count,
                     "error_count": error_count,
                     "errors": errors,
-                    "output_folder": output_folder if output_folder else os.path.join(input_folder, "markdown")
+                    "output_folder": output_folder if output_folder else os.path.join(input_folder, "markdown"),
+                    "enhanced": enhance_markdown and api_key
                 }
 
                 # Show success message
                 if success_count > 0:
-                    st.success(f"✨ Successfully converted {success_count} files using Claude Sonnet 4!")
+                    st.success(f"✨ Successfully converted {success_count} files!")
 
                 # Show error message if any
                 if error_count > 0:
@@ -175,15 +183,15 @@ def handle_folder_processing_enhanced(enhance_markdown, api_key):
                 st.error(f"Error processing folder: {str(e)}")
 
     # Display folder processing results if available
-    display_folder_results_enhanced()
+    display_folder_results()
 
 
-def display_folder_results_enhanced():
-    """Enhanced display of folder processing results."""
-    if st.session_state.folder_processing_results:
+def display_folder_results():
+    """Display folder processing results."""
+    if "folder_processing_results" in st.session_state and st.session_state.folder_processing_results:
         results = st.session_state.folder_processing_results
 
-        st.subheader("📊 Folder Processing Results")
+        st.subheader("📊 Processing Results")
 
         # Create columns for better layout
         col1, col2, col3 = st.columns(3)
@@ -193,7 +201,7 @@ def display_folder_results_enhanced():
         with col2:
             st.metric("❌ Failed Conversions", results['error_count'])
         with col3:
-            st.metric("🤖 AI Provider", "Claude Sonnet 4")
+            st.metric("🤖 AI Provider", "Claude Sonnet 4" if results.get('enhanced') else "Standard")
 
         st.markdown(f"**📁 Output Location:** {results['output_folder']}")
 
@@ -204,7 +212,7 @@ def display_folder_results_enhanced():
                     st.markdown(f"**{file_name}**: {error}")
 
         # Option to open output folder
-        if st.button("📂 Open Output Folder in File Explorer"):
+        if st.button("📂 Open Output Folder"):
             try:
                 output_dir = results['output_folder']
                 if os.path.exists(output_dir):
@@ -223,9 +231,9 @@ def display_folder_results_enhanced():
                 st.error(f"Failed to open folder: {str(e)}")
 
 
-def display_output_section_enhanced():
-    """Enhanced display of the markdown output section."""
-    if st.session_state.markdown_content:
+def display_output_section():
+    """Display the markdown output section."""
+    if "markdown_content" in st.session_state and st.session_state.markdown_content:
         st.subheader("📝 Converted Markdown")
 
         # Add some statistics about the content
@@ -248,33 +256,24 @@ def display_output_section_enhanced():
             "Markdown Content",
             value=content,
             height=400,
-            help="Your converted and enhanced markdown content"
+            help="Your converted markdown content"
         )
 
-        # Enhanced download button
+        # Download button
         filename = st.session_state.file_name.rsplit(".", 1)[
                        0] + ".md" if "." in st.session_state.file_name else st.session_state.file_name + ".md"
 
         st.download_button(
-            label="📥 Download Enhanced Markdown",
+            label="📥 Download Markdown File",
             data=content,
             file_name=filename,
             mime="text/markdown",
-            help="Download your Claude-enhanced markdown file"
+            help="Download your converted markdown file"
         )
 
-        # Option to copy to clipboard (using streamlit-extras if available)
-        try:
-            import streamlit_extras
-            if st.button("📋 Copy to Clipboard"):
-                st.write("Content copied! (You may need to manually copy from the text area above)")
-        except ImportError:
-            pass
 
-
-def main_enhanced():
-    """Enhanced main application function optimized for PowerPoint and Claude."""
-
+def main():
+    """Main application function."""
     # Set up page configuration
     setup_page_config()
 
@@ -286,63 +285,35 @@ def main_enhanced():
     if "folder_processing_results" not in st.session_state:
         st.session_state.folder_processing_results = None
 
-    # App header with Claude and PowerPoint focus
-    st.title("🚀 PowerPoint to Markdown Converter")
-    st.markdown(
-        "**Powered by Claude Sonnet 4** - Convert your PowerPoint presentations and documents to clean, "
-        "structured Markdown with advanced AI enhancement. Optimized for PowerPoint with superior "
-        "formatting preservation and intelligent content organization."
-    )
+    # App header
+    st.title("Document to Markdown Converter")
+    st.subheader(get_feature_tagline())
 
-    # Set up the enhanced sidebar
-    enhance_markdown, api_key = setup_sidebar_with_claude()
+    # Main features section
+    render_main_features()
+
+    # Set up the sidebar
+    enhance_markdown, api_key = setup_enhanced_sidebar()
 
     # Set API key in environment if provided
     if api_key:
         os.environ["ANTHROPIC_API_KEY"] = api_key
 
-    # Main content area - Tabs (removed Website URL tab)
-    tab1, tab2 = st.tabs(["📄 File Upload", "📁 Folder Processing"])
+    # Main content area - Tabs (now with About tab)
+    tab1, tab2, tab3 = st.tabs(["📄 File Upload", "📁 Folder Processing", "ℹ️ About"])
 
     with tab1:
-        handle_file_upload_enhanced(enhance_markdown, api_key)
+        handle_file_upload(enhance_markdown, api_key)
 
     with tab2:
-        handle_folder_processing_enhanced(enhance_markdown, api_key)
+        handle_folder_processing(enhance_markdown, api_key)
+
+    with tab3:
+        render_about_tab()
 
     # Display output section if markdown content exists
-    display_output_section_enhanced()
-
-
-# Installation requirements note
-def show_installation_requirements():
-    """Show installation requirements for Claude integration."""
-    st.markdown("""
-    ## 🔧 Installation Requirements
-
-    To use Claude Sonnet 4 enhancement, you need to install the Anthropic package:
-
-    ```bash
-    pip install anthropic
-    ```
-
-    You'll also need an Anthropic API key. Get one at: https://console.anthropic.com/
-
-    ## 📋 Supported File Formats
-
-    While this application supports various file formats, it is **optimized for PowerPoint presentations**:
-
-    **Primary (Optimized):**
-    - PowerPoint (.pptx, .ppt) - Advanced formatting preservation, bullet hierarchy, hyperlink extraction
-
-    **Secondary (Standard processing):**
-    - Word (.docx, .doc)
-    - PDF (basic hyperlink extraction)
-    - Excel (.xlsx, .xls)
-    - HTML (.html, .htm)
-    - Plain text formats (CSV, JSON, XML)
-    """)
+    display_output_section()
 
 
 if __name__ == "__main__":
-    main_enhanced()
+    main()

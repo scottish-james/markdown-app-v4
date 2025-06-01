@@ -5,8 +5,8 @@ Optimized for Claude Sonnet 4 processing with focus on PowerPoint presentations.
 """
 
 # App Settings
-APP_TITLE = "PowerPoint to Markdown"
-APP_ICON = "🚀"
+APP_TITLE = "Document to Markdown"
+APP_ICON = ""
 APP_LAYOUT = "centered"
 
 # UI Settings
