@@ -34,9 +34,6 @@ def setup_page_config():
     """, unsafe_allow_html=True)
 
 
-
-
-
 def display_supported_formats():
     """
     Display the supported file formats in the sidebar.
