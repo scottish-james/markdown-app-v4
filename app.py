@@ -1,64 +1,11 @@
-"""
-Document to Markdown Converter - Optimized for Claude Sonnet 4
-
-A Streamlit application for converting various document formats
-to clean, structured Markdown using Claude Sonnet 4's superior document processing capabilities.
-"""
-
 import streamlit as st
 import os
+from src.ui.sidebar import setup_enhanced_sidebar
 from src.converters.file_converter import convert_file_to_markdown
 from src.processors.folder_processor import process_folder
-from src.ui.components import setup_sidebar, get_supported_formats, setup_page_config
+from src.ui.components import get_supported_formats, setup_page_config
 from src.ui.about_tab import render_about_tab
 from src.content.features import get_main_features, get_feature_tagline, get_tool_description
-
-
-def setup_enhanced_sidebar():
-    """Enhanced sidebar setup with Claude Sonnet 4 as the primary AI provider."""
-    with st.sidebar:
-        st.header("Document to Markdown")
-        st.write("AI-Powered Document Conversion")
-
-        # Supported formats in an expander
-        with st.expander("Supported Formats"):
-            from src.ui.components import display_supported_formats
-            display_supported_formats()
-
-        # Enhancement options
-        st.subheader("AI Enhancement")
-        enhance_markdown = st.checkbox("Enhance with Claude Sonnet 4", value=True,
-                                       help="Use Claude to improve markdown formatting and structure")
-
-        api_key = None
-        if enhance_markdown:
-            api_key = st.text_input(
-                "Anthropic API Key",
-                type="password",
-                help="Enter your Anthropic API key for Claude enhancement"
-            )
-
-            # Clear instructions for getting API key
-            if not api_key:
-                st.info("💡 **Need an API key?**")
-                st.markdown("""
-                1. Visit [console.anthropic.com](https://console.anthropic.com/)
-                2. Create an account or sign in
-                3. Generate a new API key
-                4. Paste it above to unlock AI enhancement
-                """)
-            else:
-                st.success("✅ Claude Sonnet 4 ready!")
-
-        # Developer info
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("""
-        **Developed by:** James Taylor  
-        **Powered by:** Claude Sonnet 4  
-        """)
-
-    return enhance_markdown, api_key
-
 
 def render_main_features():
     """Render the main features section using content from features.py"""
@@ -294,10 +241,6 @@ def main():
 
     # Set up the sidebar
     enhance_markdown, api_key = setup_enhanced_sidebar()
-
-    # Set API key in environment if provided
-    if api_key:
-        os.environ["ANTHROPIC_API_KEY"] = api_key
 
     # Main content area - Tabs (now with About tab)
     tab1, tab2, tab3 = st.tabs(["📄 File Upload", "📁 Folder Processing", "ℹ️ About"])

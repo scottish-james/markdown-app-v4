@@ -169,12 +169,13 @@ class ClaudeMarkdownEnhancer:
             # Choose system prompt based on content type
             if "powerpoint" in content_type.lower() or "pptx" in source_filename.lower():
                 system_prompt = PPTX_PROCESSING_SYSTEM_PROMPT
-                user_prompt = f"""Please clean up this PowerPoint markdown conversion for AI training and vector database storage:
+                user_prompt = f"""
+                Please clean up this PowerPoint markdown conversion for AI training and vector database storage:
 
-**Source:** {source_filename}
+                **Source:** {source_filename}
 
-**Content to clean up:**
-{markdown_content}
+                **Content to clean up:**
+                {markdown_content}
 
 IMPORTANT: 
 1. Fix the structure, bullet hierarchies, and formatting while preserving all content and hyperlinks

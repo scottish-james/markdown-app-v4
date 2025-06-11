@@ -9,17 +9,15 @@ from markitdown import MarkItDown
 from typing import Tuple, Optional
 
 from src.utils.file_utils import get_file_extension
-from src.converters.hyperlink_extractor import extract_pdf_hyperlinks, extract_pptx_hyperlinks, \
-    format_hyperlinks_section
-from config import CLAUDE_MODEL, CLAUDE_TEMPERATURE, CLAUDE_MAX_TOKENS
+from src.converters.hyperlink_extractor import extract_pdf_hyperlinks, format_hyperlinks_section
 
 # Import the Claude enhancer
 try:
-    from .claude_markdown_enhancer import ClaudeMarkdownEnhancer
+    from .claude_markdown_convertor import ClaudeMarkdownEnhancer
     CLAUDE_AVAILABLE = True
 except ImportError:
     CLAUDE_AVAILABLE = False
-    print("Claude enhancer not available. Install anthropic package and ensure claude_markdown_enhancer.py is present.")
+    print("Claude enhancer not available. Install anthropic package and ensure claude_markdown_convertor.py is present.")
 
 
 def enhance_markdown_with_claude(markdown_content: str, api_key: str,
@@ -82,7 +80,7 @@ def convert_pptx_enhanced(file_data, filename, enhance=True, api_key=None):
     """
     try:
         import tempfile
-        from src.converters.enhanced_pptx_processor import convert_pptx_to_markdown_enhanced
+        from src.processors.enhanced_pptx_processor import convert_pptx_to_markdown_enhanced
 
         # Create temporary file for processing
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{get_file_extension(filename)}") as tmp_file:

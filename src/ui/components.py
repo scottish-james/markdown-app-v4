@@ -34,46 +34,7 @@ def setup_page_config():
     """, unsafe_allow_html=True)
 
 
-def setup_sidebar():
-    """
-    Set up the sidebar with app options and information.
 
-    Returns:
-        tuple: (enhance_markdown, openai_api_key)
-    """
-    with st.sidebar:
-        st.header("Office to MD")
-        st.write("Document Conversion Tool")
-
-        # Supported formats in an expander
-        with st.expander("Supported Formats"):
-            display_supported_formats()
-
-            # Add website conversion info
-            st.markdown("**🌐 Websites**")
-            st.markdown("- Any URL (converts HTML to Markdown)")
-
-        # Enhancement options
-        st.subheader("Enhancement Options")
-        enhance_markdown = st.checkbox("Enhance with AI", value=True,
-                                       help="Use AI to improve markdown formatting")
-
-        # API key input
-        openai_api_key = None
-        if enhance_markdown:
-            openai_api_key = st.text_input(
-                "OpenAI API Key",
-                type="password",
-                help="Enter your OpenAI API key for enhancement"
-            )
-
-        # Developer info
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("""
-        **Developed by:** James Taylor
-        """)
-
-    return enhance_markdown, openai_api_key
 
 
 def display_supported_formats():
