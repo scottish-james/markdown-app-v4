@@ -61,6 +61,9 @@ def display_results_sections():
     # Display file conversion output
     display_enhanced_output_section()
 
+    from src.ui.diagram_screenshot import render_diagram_screenshot_section
+    render_diagram_screenshot_section()
+
     # Display folder processing results
     display_folder_results()
 

@@ -1,5 +1,6 @@
 """
 File upload UI components for the Document to Markdown Converter.
+FIXED: Properly stores PowerPoint file data for screenshot functionality.
 """
 
 import streamlit as st
@@ -42,7 +43,7 @@ def create_file_uploader():
 
 def display_upload_instructions():
     """Display helpful instructions for file upload."""
-    with st.expander("Upload Information", expanded=False):
+    with st.expander("📋 Upload Instructions", expanded=False):
         st.markdown("""
         **Supported File Types:**
         - **PowerPoint**: .pptx, .ppt (optimised processing)
@@ -64,6 +65,9 @@ def handle_file_conversion(uploaded_file, enhance_markdown=True, api_key=None):
     if not uploaded_file:
         st.error("Please upload a file to convert")
         return
+
+    # FIXED: Store file data BEFORE processing (when we still have the uploaded_file object)
+    _store_powerpoint_file_data(uploaded_file)
 
     with st.spinner("Converting to Markdown..."):
         # Show progress bar
@@ -95,6 +99,32 @@ def handle_file_conversion(uploaded_file, enhance_markdown=True, api_key=None):
                 st.success("✨ Conversion completed successfully with Claude Sonnet 4 enhancement!")
             else:
                 st.success("✅ Conversion completed successfully!")
+
+
+def _store_powerpoint_file_data(uploaded_file):
+    """
+    Store PowerPoint file data in session state for later screenshot use.
+    Called during file upload process when we have access to the file.
+    """
+    if not uploaded_file:
+        return
+
+    file_ext = uploaded_file.name.split('.')[-1].lower() if '.' in uploaded_file.name else ''
+
+    if file_ext in ['pptx', 'ppt']:
+        # Store the file data for later screenshot use
+        st.session_state.uploaded_file_data = uploaded_file.getbuffer()
+        st.session_state.uploaded_file_name = uploaded_file.name
+
+        # Debug info
+        file_size_mb = len(uploaded_file.getbuffer()) / (1024 * 1024)
+        st.success(f"📁 Stored PowerPoint file data for screenshots: {uploaded_file.name} ({file_size_mb:.1f} MB)")
+    else:
+        # Clear any existing PowerPoint data for non-PowerPoint files
+        if 'uploaded_file_data' in st.session_state:
+            del st.session_state.uploaded_file_data
+        if 'uploaded_file_name' in st.session_state:
+            del st.session_state.uploaded_file_name
 
 
 def render_enhanced_file_upload(enhance_markdown=True, api_key=None):
