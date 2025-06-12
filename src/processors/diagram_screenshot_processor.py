@@ -1,6 +1,6 @@
 """
-Fixed Screenshot Processor - Better slide selection logic
-Save as: src/processors/diagram_screenshot_processor.py
+PDF-Based Screenshot Processor - Much more reliable than LibreOffice direct export
+Replace your entire src/processors/diagram_screenshot_processor.py with this content
 """
 
 import os
@@ -17,11 +17,13 @@ logger = logging.getLogger(__name__)
 
 class DiagramScreenshotProcessor:
     """
-    Handles LibreOffice-based screenshot generation with improved slide selection.
+    Handles PowerPoint screenshot generation using PDF conversion method.
+    Much more reliable than direct LibreOffice slide export.
     """
 
     def __init__(self):
         self.libreoffice_path = self._detect_libreoffice()
+        self.poppler_available = self._check_poppler()
 
     def _detect_libreoffice(self) -> Optional[str]:
         """Detect LibreOffice installation across platforms."""
@@ -69,18 +71,130 @@ class DiagramScreenshotProcessor:
 
         return None
 
+    def _check_poppler(self) -> bool:
+        """Check if poppler-utils (pdftoppm) is available."""
+        try:
+            result = subprocess.run(
+                ["pdftoppm", "-h"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except:
+            # Try alternative locations
+            try:
+                result = subprocess.run(
+                    ["/usr/local/bin/pdftoppm", "-h"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                return result.returncode == 0
+            except:
+                return False
+
+    def _get_pdftoppm_command(self) -> str:
+        """Get the pdftoppm command path."""
+        # Try common locations
+        possible_paths = ["pdftoppm", "/usr/local/bin/pdftoppm", "/opt/homebrew/bin/pdftoppm"]
+
+        for path in possible_paths:
+            try:
+                result = subprocess.run([path, "-h"], capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    return path
+            except:
+                continue
+
+        return "pdftoppm"  # Default fallback
+
     def is_available(self) -> bool:
-        """Check if LibreOffice is available."""
+        """Check if screenshot capability is available."""
         return self.libreoffice_path is not None
 
-    def _screenshot_specific_slides(self,
-                                    pptx_path: str,
-                                    slide_numbers: List[int],
-                                    output_dir: str,
-                                    base_filename: str,
-                                    debug_mode: bool = True) -> Dict[int, str]:
+    def screenshot_slides_with_all_methods(self,
+                                           pptx_path: str,
+                                           slide_numbers: List[int],
+                                           output_dir: str,
+                                           base_filename: str,
+                                           debug_mode: bool = True) -> Dict[int, str]:
         """
-        Screenshot specific slides using LibreOffice with better slide selection.
+        Try all available methods to screenshot slides.
+
+        Methods in order of preference:
+        1. PDF method (most reliable)
+        2. Direct LibreOffice export (original method)
+
+        Args:
+            pptx_path (str): Path to PowerPoint file
+            slide_numbers (List[int]): Slide numbers to screenshot (1-based)
+            output_dir (str): Directory to save screenshots
+            base_filename (str): Base filename for screenshots
+            debug_mode (bool): Show debug information
+
+        Returns:
+            Dict[int, str]: Mapping of slide numbers to screenshot file paths
+        """
+        if debug_mode:
+            print(f"🎯 Attempting to screenshot slides: {slide_numbers}")
+            print(f"📊 Available methods:")
+            print(f"  • PDF method: {'✅' if self.is_available() else '❌'}")
+            print(f"  • Poppler available: {'✅' if self.poppler_available else '❌'}")
+
+        # Method 1: PDF conversion approach (most reliable)
+        if debug_mode:
+            print(f"\n🔥 Trying PDF method (most reliable)...")
+
+        try:
+            results = self.screenshot_slides_pdf_method(
+                pptx_path, slide_numbers, output_dir, base_filename, debug_mode
+            )
+
+            if len(results) == len(slide_numbers):
+                if debug_mode:
+                    print(f"🎉 PDF method succeeded for all slides!")
+                return results
+            elif len(results) > 0:
+                if debug_mode:
+                    print(f"⚠️  PDF method partially succeeded ({len(results)}/{len(slide_numbers)})")
+                return results
+            else:
+                if debug_mode:
+                    print(f"❌ PDF method failed, trying fallback...")
+        except Exception as e:
+            if debug_mode:
+                print(f"❌ PDF method error: {str(e)}")
+
+        # Method 2: Original LibreOffice direct method (fallback)
+        if debug_mode:
+            print(f"\n🔄 Trying original LibreOffice method (fallback)...")
+
+        try:
+            # Use the original method as absolute fallback
+            results = self._original_libreoffice_method(
+                pptx_path, slide_numbers, output_dir, base_filename, debug_mode
+            )
+            return results
+        except Exception as e:
+            if debug_mode:
+                print(f"❌ All methods failed: {str(e)}")
+            return {}
+
+    def screenshot_slides_pdf_method(self,
+                                     pptx_path: str,
+                                     slide_numbers: List[int],
+                                     output_dir: str,
+                                     base_filename: str,
+                                     debug_mode: bool = True) -> Dict[int, str]:
+        """
+        Screenshot specific slides using PDF conversion method.
+        Much more reliable than direct LibreOffice slide export.
+
+        Steps:
+        1. Convert PowerPoint to PDF using LibreOffice
+        2. Extract specific pages from PDF as PNG images
+        3. Clean up temporary files
 
         Args:
             pptx_path (str): Path to PowerPoint file
@@ -102,8 +216,246 @@ class DiagramScreenshotProcessor:
             if debug_mode:
                 print(f"🔧 Using temp directory: {temp_dir}")
                 print(f"🎯 Requested slides: {slide_numbers}")
+                print(f"📄 Poppler available: {self.poppler_available}")
 
-            # Export all slides to images using LibreOffice
+            try:
+                # Step 1: Convert PowerPoint to PDF
+                pdf_path = self._convert_pptx_to_pdf(pptx_path, temp_dir, debug_mode)
+
+                if not pdf_path or not os.path.exists(pdf_path):
+                    if debug_mode:
+                        print("❌ Failed to convert PowerPoint to PDF")
+                    return {}
+
+                # Step 2: Extract specific slides from PDF
+                if self.poppler_available:
+                    results = self._extract_slides_with_poppler(
+                        pdf_path, slide_numbers, output_dir, base_filename, debug_mode
+                    )
+                else:
+                    # Fallback: Use LibreOffice to convert PDF pages
+                    results = self._extract_slides_with_libreoffice(
+                        pdf_path, slide_numbers, output_dir, base_filename, debug_mode
+                    )
+
+            except Exception as e:
+                if debug_mode:
+                    print(f"❌ Error in PDF method: {str(e)}")
+
+        if debug_mode:
+            print(f"\n📊 Final PDF method results: {len(results)} of {len(slide_numbers)} slides captured")
+            for slide_num in slide_numbers:
+                status = "✅" if slide_num in results else "❌"
+                print(f"  {status} Slide {slide_num}")
+
+        return results
+
+    def _convert_pptx_to_pdf(self, pptx_path: str, temp_dir: str, debug_mode: bool) -> Optional[str]:
+        """Convert PowerPoint to PDF using LibreOffice."""
+        if debug_mode:
+            print(f"📄 Converting PowerPoint to PDF...")
+
+        # LibreOffice command to convert to PDF
+        cmd = [
+            self.libreoffice_path,
+            "--headless",
+            "--convert-to", "pdf",
+            "--outdir", temp_dir,
+            pptx_path
+        ]
+
+        if debug_mode:
+            print(f"🚀 Running: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120  # 2 minute timeout for PDF conversion
+            )
+
+            if result.returncode != 0:
+                if debug_mode:
+                    print(f"❌ LibreOffice PDF conversion failed: {result.stderr}")
+                return None
+
+            # Find the generated PDF
+            pdf_files = [f for f in os.listdir(temp_dir) if f.endswith('.pdf')]
+
+            if not pdf_files:
+                if debug_mode:
+                    print("❌ No PDF file was generated")
+                return None
+
+            pdf_path = os.path.join(temp_dir, pdf_files[0])
+
+            if debug_mode:
+                pdf_size = os.path.getsize(pdf_path) / 1024
+                print(f"✅ PDF created: {pdf_files[0]} ({pdf_size:.1f} KB)")
+
+            return pdf_path
+
+        except subprocess.TimeoutExpired:
+            if debug_mode:
+                print("❌ PDF conversion timed out")
+            return None
+        except Exception as e:
+            if debug_mode:
+                print(f"❌ Error during PDF conversion: {str(e)}")
+            return None
+
+    def _extract_slides_with_poppler(self,
+                                     pdf_path: str,
+                                     slide_numbers: List[int],
+                                     output_dir: str,
+                                     base_filename: str,
+                                     debug_mode: bool) -> Dict[int, str]:
+        """Extract specific slides using poppler-utils (pdftoppm)."""
+        if debug_mode:
+            print(f"🖼️  Extracting slides using poppler-utils...")
+
+        results = {}
+        pdftoppm_cmd = self._get_pdftoppm_command()
+
+        for slide_num in slide_numbers:
+            if debug_mode:
+                print(f"\n🎯 Extracting slide {slide_num} with poppler...")
+
+            # Output filename for this slide
+            output_filename = f"{base_filename}_slide_{slide_num:02d}_diagram.png"
+            output_path = os.path.join(output_dir, output_filename)
+
+            # pdftoppm command to extract specific page
+            # -png: output as PNG
+            # -f: first page to convert
+            # -l: last page to convert
+            # -singlefile: generate single file (not page-001.png format)
+            cmd = [
+                pdftoppm_cmd,
+                "-png",
+                "-f", str(slide_num),
+                "-l", str(slide_num),
+                "-singlefile",
+                pdf_path,
+                os.path.join(output_dir, f"{base_filename}_slide_{slide_num:02d}_diagram")
+            ]
+
+            if debug_mode:
+                print(f"🚀 Running: {' '.join(cmd)}")
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30  # 30 second timeout per slide
+                )
+
+                if result.returncode != 0:
+                    if debug_mode:
+                        print(f"❌ pdftoppm failed for slide {slide_num}: {result.stderr}")
+                    continue
+
+                # Check if the file was created
+                if os.path.exists(output_path):
+                    file_size = os.path.getsize(output_path) / 1024
+                    results[slide_num] = output_path
+
+                    if debug_mode:
+                        print(f"✅ Slide {slide_num} extracted: {output_filename} ({file_size:.1f} KB)")
+                else:
+                    if debug_mode:
+                        print(f"❌ Output file not found for slide {slide_num}: {output_path}")
+
+            except subprocess.TimeoutExpired:
+                if debug_mode:
+                    print(f"❌ pdftoppm timed out for slide {slide_num}")
+                continue
+            except Exception as e:
+                if debug_mode:
+                    print(f"❌ Error extracting slide {slide_num}: {str(e)}")
+                continue
+
+        return results
+
+    def _extract_slides_with_libreoffice(self,
+                                         pdf_path: str,
+                                         slide_numbers: List[int],
+                                         output_dir: str,
+                                         base_filename: str,
+                                         debug_mode: bool) -> Dict[int, str]:
+        """Fallback: Extract slides using LibreOffice (when poppler not available)."""
+        if debug_mode:
+            print(f"🔄 Using LibreOffice fallback for PDF extraction...")
+
+        # This is a simpler approach - convert the entire PDF to images
+        # then select the ones we need
+
+        with tempfile.TemporaryDirectory() as extract_temp:
+            # Convert entire PDF to PNG images
+            cmd = [
+                self.libreoffice_path,
+                "--headless",
+                "--convert-to", "png",
+                "--outdir", extract_temp,
+                pdf_path
+            ]
+
+            if debug_mode:
+                print(f"🚀 Converting PDF to images: {' '.join(cmd)}")
+
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+                if result.returncode != 0:
+                    if debug_mode:
+                        print(f"❌ LibreOffice PDF extraction failed: {result.stderr}")
+                    return {}
+
+                # Find extracted images
+                image_files = sorted([f for f in os.listdir(extract_temp) if f.endswith('.png')])
+
+                if debug_mode:
+                    print(f"📁 LibreOffice extracted {len(image_files)} images")
+
+                # Copy requested slides to output directory
+                results = {}
+                for slide_num in slide_numbers:
+                    if slide_num <= len(image_files):
+                        source_file = os.path.join(extract_temp, image_files[slide_num - 1])
+                        output_filename = f"{base_filename}_slide_{slide_num:02d}_diagram.png"
+                        output_path = os.path.join(output_dir, output_filename)
+
+                        shutil.copy2(source_file, output_path)
+                        results[slide_num] = output_path
+
+                        if debug_mode:
+                            file_size = os.path.getsize(output_path) / 1024
+                            print(f"✅ Slide {slide_num}: {output_filename} ({file_size:.1f} KB)")
+                    else:
+                        if debug_mode:
+                            print(f"❌ Slide {slide_num} not available (only {len(image_files)} pages)")
+
+                return results
+
+            except Exception as e:
+                if debug_mode:
+                    print(f"❌ Error in LibreOffice fallback: {str(e)}")
+                return {}
+
+    def _original_libreoffice_method(self,
+                                     pptx_path: str,
+                                     slide_numbers: List[int],
+                                     output_dir: str,
+                                     base_filename: str,
+                                     debug_mode: bool) -> Dict[int, str]:
+        """Original LibreOffice method as last resort."""
+        if debug_mode:
+            print("🔄 Using original LibreOffice method...")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Export all slides as images
             cmd = [
                 self.libreoffice_path,
                 "--headless",
@@ -112,135 +464,31 @@ class DiagramScreenshotProcessor:
                 pptx_path
             ]
 
-            if debug_mode:
-                print(f"🚀 Running LibreOffice: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-            try:
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=120  # 2 minute timeout
-                )
-
-                if result.returncode != 0:
-                    error_msg = f"LibreOffice export failed: {result.stderr}"
-                    if debug_mode:
-                        print(f"❌ {error_msg}")
-                    raise RuntimeError(error_msg)
-
+            if result.returncode != 0:
                 if debug_mode:
-                    print("✅ LibreOffice export completed successfully")
+                    print(f"❌ Original method failed: {result.stderr}")
+                return {}
 
-                # List all exported files
-                exported_files = [f for f in os.listdir(temp_dir) if f.endswith('.png')]
-                exported_files.sort()  # Sort for consistent ordering
-
-                if debug_mode:
-                    print(f"📁 Found {len(exported_files)} exported files:")
-                    for i, f in enumerate(exported_files, 1):
-                        print(f"  {i:2d}: {f}")
-
-                if not exported_files:
-                    raise RuntimeError("No PNG files were exported by LibreOffice")
-
-                # Map slide numbers to files using multiple strategies
-                results = self._map_slides_to_files(
-                    slide_numbers, exported_files, temp_dir,
-                    pptx_path, output_dir, base_filename, debug_mode
-                )
-
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("LibreOffice export timed out (>2 minutes)")
-            except Exception as e:
-                raise RuntimeError(f"Error during LibreOffice export: {str(e)}")
-
-        return results
-
-    def _map_slides_to_files(self, slide_numbers: List[int], exported_files: List[str],
-                             temp_dir: str, pptx_path: str, output_dir: str,
-                             base_filename: str, debug_mode: bool) -> Dict[int, str]:
-        """Map requested slide numbers to exported files using multiple strategies."""
-        results = {}
-        pptx_stem = Path(pptx_path).stem
-
-        if debug_mode:
-            print(f"\n🔍 Mapping slides to files...")
-            print(f"📊 PowerPoint stem: '{pptx_stem}'")
-
-        # Strategy 1: Direct filename matching (most common)
-        for slide_num in slide_numbers:
-            found_file = None
-
-            # Try multiple naming patterns LibreOffice might use
-            patterns_to_try = [
-                f"{pptx_stem}_{slide_num:02d}.png",  # presentation_10.png
-                f"{pptx_stem}-{slide_num:02d}.png",  # presentation-10.png
-                f"{pptx_stem}_{slide_num}.png",  # presentation_10.png (no padding)
-                f"{pptx_stem}-{slide_num}.png",  # presentation-10.png (no padding)
-                f"{pptx_stem} ({slide_num}).png",  # presentation (10).png
-                f"{pptx_stem}_{slide_num:03d}.png",  # presentation_010.png (3-digit padding)
-                f"slide{slide_num}.png",  # slide10.png
-                f"Slide{slide_num}.png",  # Slide10.png
-                f"slide_{slide_num}.png",  # slide_10.png
-                f"Slide_{slide_num}.png"  # Slide_10.png
-            ]
+            # Find exported files
+            exported_files = sorted([f for f in os.listdir(temp_dir) if f.endswith('.png')])
 
             if debug_mode:
-                print(f"\n🎯 Looking for slide {slide_num}:")
+                print(f"📁 Original method exported {len(exported_files)} files")
 
-            for pattern in patterns_to_try:
-                test_path = os.path.join(temp_dir, pattern)
-                if os.path.exists(test_path):
-                    found_file = test_path
-                    if debug_mode:
-                        print(f"  ✅ Found: {pattern}")
-                    break
-                elif debug_mode:
-                    print(f"  ❌ Not found: {pattern}")
-
-            # Strategy 2: If direct matching fails, try positional matching
-            if not found_file and len(exported_files) >= slide_num:
-                # Assume files are in slide order (1st file = slide 1, etc.)
-                positional_file = exported_files[slide_num - 1]  # Convert to 0-based
-                test_path = os.path.join(temp_dir, positional_file)
-
-                if os.path.exists(test_path):
-                    found_file = test_path
-                    if debug_mode:
-                        print(f"  ✅ Using positional match: {positional_file} (position {slide_num})")
-
-            # Strategy 3: Single file case
-            if not found_file and len(exported_files) == 1 and len(slide_numbers) == 1:
-                # If only one file exported and only one slide requested, use it
-                single_file = exported_files[0]
-                test_path = os.path.join(temp_dir, single_file)
-                found_file = test_path
-                if debug_mode:
-                    print(f"  ✅ Single file match: {single_file}")
-
-            # Copy the found file to final location
-            if found_file and os.path.exists(found_file):
-                final_filename = f"{base_filename}_slide_{slide_num:02d}_diagram.png"
-                final_path = os.path.join(output_dir, final_filename)
-
-                shutil.copy2(found_file, final_path)
-                results[slide_num] = final_path
-
-                if debug_mode:
-                    file_size = os.path.getsize(final_path) / 1024  # KB
-                    print(f"  💾 Saved: {final_filename} ({file_size:.1f} KB)")
-            else:
-                if debug_mode:
-                    print(f"  ❌ Could not find file for slide {slide_num}")
-
-        if debug_mode:
-            print(f"\n📊 Final results: {len(results)} of {len(slide_numbers)} slides captured")
+            # Map slides to files
+            results = {}
             for slide_num in slide_numbers:
-                status = "✅" if slide_num in results else "❌"
-                print(f"  {status} Slide {slide_num}")
+                if slide_num <= len(exported_files):
+                    source_file = os.path.join(temp_dir, exported_files[slide_num - 1])
+                    output_filename = f"{base_filename}_slide_{slide_num:02d}_diagram.png"
+                    output_path = os.path.join(output_dir, output_filename)
 
-        return results
+                    shutil.copy2(source_file, output_path)
+                    results[slide_num] = output_path
+
+            return results
 
 
 def test_diagram_screenshot_capability() -> Tuple[bool, str]:
@@ -261,7 +509,8 @@ def test_diagram_screenshot_capability() -> Tuple[bool, str]:
 
         if result.returncode == 0:
             version_info = result.stdout.strip()
-            return True, f"LibreOffice available: {version_info}"
+            poppler_status = "with Poppler support" if processor.poppler_available else "without Poppler (fallback mode)"
+            return True, f"LibreOffice available: {version_info} ({poppler_status})"
         else:
             return False, f"LibreOffice found but not working: {result.stderr}"
 
@@ -269,3 +518,40 @@ def test_diagram_screenshot_capability() -> Tuple[bool, str]:
         return False, "LibreOffice version check timed out"
     except Exception as e:
         return False, f"Error testing LibreOffice: {str(e)}"
+
+
+def install_poppler_instructions():
+    """Return platform-specific instructions for installing poppler-utils."""
+    system = platform.system()
+
+    if system == "Darwin":  # macOS
+        return """Install poppler-utils on macOS:
+
+Using Homebrew:
+brew install poppler
+
+Using MacPorts:
+sudo port install poppler"""
+    elif system == "Linux":
+        return """Install poppler-utils on Linux:
+
+Ubuntu/Debian:
+sudo apt-get install poppler-utils
+
+CentOS/RHEL:
+sudo yum install poppler-utils
+
+Fedora:
+sudo dnf install poppler-utils"""
+    elif system == "Windows":
+        return """Install poppler-utils on Windows:
+
+1. Download poppler for Windows from: 
+   https://github.com/oschwartz10612/poppler-windows/releases
+2. Extract to a folder (e.g., C:\\poppler)
+3. Add C:\\poppler\\bin to your PATH environment variable
+
+Or use chocolatey:
+choco install poppler"""
+    else:
+        return "Install poppler-utils for your operating system to enable improved PDF processing."
