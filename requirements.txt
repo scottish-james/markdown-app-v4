@@ -1,5 +1,5 @@
-# Core Dependencies for PowerPoint to Markdown Converter
-# Optimized for Claude Sonnet 4 processing
+# Core Dependencies for Document to Markdown Converter
+# Updated for WSL 2 compatibility
 
 # Streamlit for web interface
 streamlit>=1.45.1
@@ -15,7 +15,7 @@ pydeck==0.9.1
 tornado==6.5
 tzdata==2025.2
 
-# Core Anthropic SDK for Claude Sonnet 4
+# Anthropic SDK for Claude Sonnet 4
 anthropic==0.40.0
 
 # Document processing and conversion
@@ -97,7 +97,7 @@ distro==1.9.0
 coloredlogs==15.0.1
 humanfriendly==10.0
 
-# Optional: Enhanced Streamlit components (for better UI)
+# Optional: Enhanced Streamlit components
 streamlit-extras==0.4.7
 
 # Optional: For better clipboard functionality
@@ -106,6 +106,3 @@ pyperclip==1.9.0
 # Optional: For async support in batch processing
 aiohttp==3.10.11
 asyncio-throttle==1.0.2
-
-# Note: OpenAI package removed as this application is Claude-focused
-# Note: Website/URL processing dependencies minimized as web functionality removed
