@@ -42,7 +42,7 @@ def create_file_uploader():
 
 def display_upload_instructions():
     """Display helpful instructions for file upload."""
-    with st.expander("📋 Upload Instructions", expanded=False):
+    with st.expander("Upload Information", expanded=False):
         st.markdown("""
         **Supported File Types:**
         - **PowerPoint**: .pptx, .ppt (optimised processing)

@@ -1,7 +1,100 @@
-"""
+def add_diagram_candidate_markers(self, markdown_content, structured_data):
+    """
+    Secondary process: Add diagram candidate markers based on lines and arrows
+    """
+    # Analyze each slide for diagram indicators
+    diagram_slides = []
+
+    for slide_idx, slide in enumerate(structured_data["slides"]):
+        diagram_analysis = self.analyze_slide_for_diagram_shapes(slide)
+        if diagram_analysis["is_likely_diagram"]:
+            diagram_slides.append({
+                "slide": slide_idx + 1,
+                "analysis": diagram_analysis
+            })
+
+    # Add markers for slides with diagram indicators
+    if diagram_slides:
+        lines = markdown_content.split('\n')
+
+        for diagram_slide in diagram_slides:
+            slide_num = diagram_slide["slide"]
+            analysis = diagram_slide["analysis"]
+
+            # Create informative comment
+            indicators = []
+            if analysis["lines"]: indicators.append(f"lines: {analysis['lines']}")
+            if analysis["arrows"]: indicators.append(f"arrows: {analysis['arrows']}")
+            if analysis["connectors"]: indicators.append(f"connectors: {analysis['connectors']}")
+
+            comment = f"\n<!-- DIAGRAM_DETECTED: {', '.join(indicators)} -->\n"
+
+            # Find the slide and add comment after it
+            slide_marker = f"<!-- Slide {slide_num} -->"
+            for i, line in enumerate(lines):
+                if slide_marker in line:
+                    # Find the end of this slide's content
+                    next_slide_idx = len(lines)
+                    for j in range(i + 1, len(lines)):
+                        if lines[j].strip().startswith('<!-- Slide '):
+                            next_slide_idx = j
+                            break
+
+                    # Insert before next slide
+                    lines.insert(next_slide_idx, comment)
+                    break
+
+        markdown_content = '\n'.join(lines)
+
+    return markdown_content
+
+
+def analyze_slide_for_diagram_shapes(self, slide_data):
+    """
+    Analyze a slide for diagram indicators: lines, arrows, connectors
+    """
+    analysis = {
+        "is_likely_diagram": False,
+        "lines": 0,
+        "arrows": 0,
+        "connectors": 0,
+        "total_shapes": 0,
+        "diagram_shapes": 0
+    }
+
+    # Check all content blocks on the slide
+    for block in slide_data.get("content_blocks", []):
+        self._analyze_block_for_diagram_shapes(block, analysis)
+
+    # Determine if this looks like a diagram
+    diagram_shape_count = analysis["lines"] + analysis["arrows"] + analysis["connectors"]
+    analysis["diagram_shapes"] = diagram_shape_count
+
+    # If we have lines/arrows/connectors, it's likely a diagram
+    analysis["is_likely_diagram"] = diagram_shape_count > 0
+
+    return analysis
+
+
+def _analyze_block_for_diagram_shapes(self, block, analysis):
+    """
+    Recursively analyze a block and its shapes for diagram indicators
+    """
+    analysis["total_shapes"] += 1
+
+    # Check if this block represents a line/arrow/connector
+    # Note: We'd need to modify extract_shape_content to capture shape_type info
+    shape_type = block.get("shape_type")
+    auto_shape_type = block.get("auto_shape_type")
+
+    if shape_type == "LINE":
+        analysis["lines"] += 1
+    elif shape_type == "CONNECTOR":
+        """
 PowerPoint Processor - Fixed and Complete
-Maintains all original functionality while fixing bullet detection
+Maintains all original functionality while fixing bullet detection and adding slide title conversion
 """
+
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -14,14 +107,18 @@ import xml.etree.ElementTree as ET
 
 
 class PowerPointProcessor:
-    """Complete PowerPoint processing with fixed bullet detection"""
+    """Complete PowerPoint processing with fixed bullet detection and slide title conversion"""
 
     def __init__(self):
         self.supported_formats = ['.pptx', '.ppt']
 
-    def convert_pptx_to_markdown_enhanced(self, file_path):
+    def convert_pptx_to_markdown_enhanced(self, file_path, convert_slide_titles=True):
         """
-        Main entry point: Convert PowerPoint to structured data, then to markdown with embedded metadata
+        Main entry point: v14 text extraction + v19 diagram detection appended at end
+
+        Args:
+            file_path (str): Path to the PowerPoint file
+            convert_slide_titles (bool): Whether to convert slide titles from bullets to H1 headings
         """
         try:
             prs = Presentation(file_path)
@@ -29,18 +126,359 @@ class PowerPointProcessor:
             # Extract PowerPoint metadata first
             pptx_metadata = self.extract_pptx_metadata(prs, file_path)
 
-            # Extract structured data
+            # Extract structured data (v14 approach)
             structured_data = self.extract_presentation_data(prs)
 
-            # Convert to basic markdown
-            markdown = self.convert_structured_data_to_markdown(structured_data)
+            # Convert to basic markdown (v14 approach)
+            markdown = self.convert_structured_data_to_markdown(structured_data, convert_slide_titles)
 
             # Add PowerPoint metadata as comments for Claude to use
             markdown_with_metadata = self.add_pptx_metadata_for_claude(markdown, pptx_metadata)
 
+            # APPEND v19 diagram analysis at the end
+            diagram_analysis = self.analyze_structured_data_for_diagrams(structured_data)
+            if diagram_analysis:
+                markdown_with_metadata += "\n\n" + diagram_analysis
+
             return markdown_with_metadata
         except Exception as e:
             raise Exception(f"Error processing PowerPoint file: {str(e)}")
+
+    def analyze_structured_data_for_diagrams(self, structured_data):
+        """
+        v19 diagram analysis system - analyze extracted structured data
+        """
+        try:
+            diagram_slides = []
+
+            for slide_idx, slide in enumerate(structured_data["slides"]):
+                score_analysis = self.score_slide_for_diagram(slide)
+                if score_analysis["probability"] >= 40:  # 40%+ probability threshold
+                    diagram_slides.append({
+                        "slide": slide_idx + 1,
+                        "analysis": score_analysis
+                    })
+
+            # Generate detailed summary
+            if diagram_slides:
+                summary = "## DIAGRAM ANALYSIS (v19 Scoring System)\n\n"
+                summary += "**Slides with potential diagrams:**\n\n"
+
+                for slide_info in diagram_slides:
+                    analysis = slide_info["analysis"]
+                    summary += f"- **Slide {slide_info['slide']}**: {analysis['probability']}% probability "
+                    summary += f"(Score: {analysis['total_score']}) - {', '.join(analysis['reasons'])}\n"
+                    summary += f"  - Shapes: {analysis['shape_count']}, Lines: {analysis['line_count']}, Arrows: {analysis['arrow_count']}\n\n"
+
+                return summary
+
+            return None
+
+        except Exception as e:
+            return f"\n\n<!-- v19 Diagram analysis error: {e} -->"
+
+    def score_slide_for_diagram(self, slide_data):
+        """
+        v19 scoring system: Score a slide for diagram probability using sophisticated rules
+        """
+        content_blocks = slide_data.get("content_blocks", [])
+
+        # Collect all shapes and lines from structured data
+        shapes = []
+        lines = []
+        arrows = []
+        text_blocks = []
+
+        for block in content_blocks:
+            if block.get("type") == "line":
+                lines.append(block)
+            elif block.get("type") == "arrow":
+                arrows.append(block)
+            elif block.get("type") == "text":
+                text_blocks.append(block)
+                shapes.append(block)
+            elif block.get("type") in ["shape", "image", "chart"]:
+                shapes.append(block)
+            elif block.get("type") == "group":
+                # Recursively analyze group contents
+                group_analysis = self._analyze_group_contents(block)
+                shapes.extend(group_analysis["shapes"])
+                lines.extend(group_analysis["lines"])
+                arrows.extend(group_analysis["arrows"])
+                text_blocks.extend(group_analysis["text_blocks"])
+
+        # Calculate score based on v19 rules
+        score = 0
+        reasons = []
+
+        # Rule 1: Line/Arrow threshold (20+ points each)
+        if len(arrows) > 0:
+            score += 20
+            reasons.append(f"block_arrows:{len(arrows)}")
+
+        if len(lines) >= 3:
+            score += 20
+            reasons.append(f"connector_lines:{len(lines)}")
+
+        # Rule 2: Line-to-shape ratio (15 points)
+        total_lines = len(lines) + len(arrows)
+        if len(shapes) > 0:
+            line_ratio = total_lines / len(shapes)
+            if line_ratio >= 0.5:
+                score += 15
+                reasons.append(f"line_ratio:{line_ratio:.1f}")
+
+        # Rule 3: Spatial layout analysis (10-15 points)
+        layout_score = self._analyze_spatial_layout(shapes)
+        score += layout_score["score"]
+        if layout_score["score"] > 0:
+            reasons.append(f"layout:{layout_score['type']}")
+
+        # Rule 4: Shape variety (10-15 points)
+        variety_score = self._analyze_shape_variety(shapes)
+        score += variety_score
+        if variety_score > 0:
+            reasons.append(f"variety:{variety_score}")
+
+        # Rule 5: Text density analysis (10 points)
+        text_score = self._analyze_text_density(text_blocks)
+        score += text_score
+        if text_score > 0:
+            reasons.append(f"short_text:{text_score}")
+
+        # Rule 6: Flow patterns (20 points)
+        flow_score = self._analyze_flow_patterns(shapes, lines, arrows, text_blocks)
+        score += flow_score
+        if flow_score > 0:
+            reasons.append(f"flow_pattern:{flow_score}")
+
+        # Negative indicators
+        negative_score = self._analyze_negative_indicators(text_blocks, shapes)
+        score += negative_score  # negative_score will be negative or 0
+        if negative_score < 0:
+            reasons.append(f"negatives:{negative_score}")
+
+        # Convert score to probability
+        if score >= 60:
+            probability = 95
+        elif score >= 40:
+            probability = 75
+        elif score >= 20:
+            probability = 40
+        else:
+            probability = 10
+
+        return {
+            "total_score": score,
+            "probability": probability,
+            "reasons": reasons,
+            "shape_count": len(shapes),
+            "line_count": len(lines),
+            "arrow_count": len(arrows)
+        }
+
+    def _analyze_group_contents(self, group_block):
+        """Recursively analyze group contents for diagram elements"""
+        result = {"shapes": [], "lines": [], "arrows": [], "text_blocks": []}
+
+        for extracted_block in group_block.get("extracted_blocks", []):
+            if extracted_block.get("type") == "line":
+                result["lines"].append(extracted_block)
+            elif extracted_block.get("type") == "arrow":
+                result["arrows"].append(extracted_block)
+            elif extracted_block.get("type") == "text":
+                result["text_blocks"].append(extracted_block)
+                result["shapes"].append(extracted_block)
+            elif extracted_block.get("type") in ["shape", "image", "chart"]:
+                result["shapes"].append(extracted_block)
+
+        return result
+
+    def _analyze_spatial_layout(self, shapes):
+        """Analyze spatial layout patterns"""
+        if len(shapes) < 3:
+            return {"score": 0, "type": "insufficient"}
+
+        positions = []
+        for shape in shapes:
+            pos = shape.get("position")
+            if pos:
+                positions.append((pos["top"], pos["left"]))
+
+        if len(positions) < 3:
+            return {"score": 0, "type": "no_position_data"}
+
+        # Calculate spread
+        tops = [p[0] for p in positions]
+        lefts = [p[1] for p in positions]
+
+        top_range = max(tops) - min(tops) if tops else 0
+        left_range = max(lefts) - min(lefts) if lefts else 0
+
+        # Check for grid-like arrangement
+        unique_tops = len(set(round(t / 100000) for t in tops))  # Group by approximate position
+        unique_lefts = len(set(round(l / 100000) for l in lefts))
+
+        if unique_tops >= 2 and unique_lefts >= 2:
+            return {"score": 15, "type": "grid_layout"}
+        elif top_range > 1000000 and left_range > 1000000:
+            return {"score": 10, "type": "spread_layout"}
+        else:
+            return {"score": 0, "type": "linear_layout"}
+
+    def _analyze_shape_variety(self, shapes):
+        """Analyze variety in shape types and sizes"""
+        if len(shapes) < 2:
+            return 0
+
+        shape_types = set()
+        sizes = []
+
+        for shape in shapes:
+            shape_types.add(shape.get("type", "unknown"))
+            pos = shape.get("position")
+            if pos:
+                size = pos["width"] * pos["height"]
+                sizes.append(size)
+
+        score = 0
+
+        # Multiple shape types
+        if len(shape_types) >= 3:
+            score += 15
+        elif len(shape_types) >= 2:
+            score += 10
+
+        # Consistent sizing (indicates process flow)
+        if len(sizes) >= 3:
+            avg_size = sum(sizes) / len(sizes)
+            variations = [abs(size - avg_size) / avg_size for size in sizes if avg_size > 0]
+            if variations and max(variations) < 0.5:  # Less than 50% variation
+                score += 5
+
+        return score
+
+    def _analyze_text_density(self, text_blocks):
+        """Analyze text characteristics for diagram indicators"""
+        if not text_blocks:
+            return 0
+
+        short_text_count = 0
+        total_blocks = len(text_blocks)
+
+        for block in text_blocks:
+            # Count average words per paragraph
+            total_words = 0
+            para_count = 0
+
+            for para in block.get("paragraphs", []):
+                clean_text = para.get("clean_text", "")
+                if clean_text:
+                    words = len(clean_text.split())
+                    total_words += words
+                    para_count += 1
+
+            if para_count > 0:
+                avg_words = total_words / para_count
+                if avg_words <= 5:  # Short labels
+                    short_text_count += 1
+
+        # Score based on percentage of short text blocks
+        if total_blocks > 0:
+            short_ratio = short_text_count / total_blocks
+            if short_ratio >= 0.7:  # 70%+ short text
+                return 10
+            elif short_ratio >= 0.5:  # 50%+ short text
+                return 5
+
+        return 0
+
+    def _analyze_flow_patterns(self, shapes, lines, arrows, text_blocks):
+        """Analyze for flow patterns and process keywords"""
+        score = 0
+
+        # Check for start/end keywords
+        flow_keywords = ["start", "begin", "end", "finish", "process", "step", "decision"]
+        action_words = ["create", "update", "check", "verify", "send", "receive", "analyze"]
+
+        all_text = ""
+        for block in text_blocks:
+            for para in block.get("paragraphs", []):
+                all_text += " " + para.get("clean_text", "").lower()
+
+        flow_matches = sum(1 for keyword in flow_keywords if keyword in all_text)
+        action_matches = sum(1 for keyword in action_words if keyword in all_text)
+
+        if flow_matches >= 2:
+            score += 20
+        elif flow_matches >= 1:
+            score += 10
+
+        if action_matches >= 3:
+            score += 10
+
+        # Bonus for having both shapes and connecting elements
+        if len(shapes) >= 3 and (len(lines) > 0 or len(arrows) > 0):
+            score += 15
+
+        return score
+
+    def _analyze_negative_indicators(self, text_blocks, shapes):
+        """Check for negative indicators that suggest NOT a diagram"""
+        score = 0
+
+        # Check for long paragraphs
+        long_text_count = 0
+        bullet_count = 0
+
+        for block in text_blocks:
+            for para in block.get("paragraphs", []):
+                clean_text = para.get("clean_text", "")
+                if clean_text:
+                    word_count = len(clean_text.split())
+                    if word_count > 20:  # Long paragraph
+                        long_text_count += 1
+
+                    # Check for bullet points
+                    if para.get("hints", {}).get("is_bullet", False):
+                        bullet_count += 1
+
+        # Penalize long text
+        if long_text_count >= 2:
+            score -= 15
+
+        # Penalize if mostly bullet points
+        total_paras = sum(len(block.get("paragraphs", [])) for block in text_blocks)
+        if total_paras > 0 and bullet_count / total_paras > 0.8:
+            score -= 10
+
+        # Penalize single column layout (all shapes vertically aligned)
+        if len(shapes) >= 3:
+            positions = [s.get("position") for s in shapes if s.get("position")]
+            if len(positions) >= 3:
+                lefts = [p["left"] for p in positions]
+                left_variance = max(lefts) - min(lefts) if lefts else 0
+                if left_variance < 500000:  # Very narrow horizontal spread
+                    score -= 10
+
+        return score
+
+    def is_arrow_shape(self, auto_shape_type):
+        """Check if an auto shape type is an arrow"""
+        if not auto_shape_type:
+            return False
+
+        arrow_types = [
+            "LEFT_ARROW", "DOWN_ARROW", "UP_ARROW", "RIGHT_ARROW",
+            "LEFT_RIGHT_ARROW", "UP_DOWN_ARROW", "QUAD_ARROW",
+            "LEFT_RIGHT_UP_ARROW", "BENT_ARROW", "U_TURN_ARROW",
+            "CURVED_LEFT_ARROW", "CURVED_RIGHT_ARROW",
+            "CURVED_UP_ARROW", "CURVED_DOWN_ARROW",
+            "STRIPED_RIGHT_ARROW", "NOTCHED_RIGHT_ARROW",
+            "BLOCK_ARC"
+        ]
+
+        return any(arrow_type in auto_shape_type for arrow_type in arrow_types)
 
     def extract_pptx_metadata(self, presentation, file_path):
         """Extract comprehensive metadata from PowerPoint file"""
@@ -198,20 +636,99 @@ class PowerPointProcessor:
         return slide_data
 
     def extract_shape_content(self, shape):
-        """Extract shape content with proper type detection"""
-        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-            return self.extract_image(shape)
-        elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
-            return self.extract_table(shape.table)
-        elif hasattr(shape, 'has_chart') and shape.has_chart:
-            return self.extract_chart(shape)
-        elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-            return self.extract_group(shape)
-        elif hasattr(shape, 'text_frame') and shape.text_frame:
-            return self.extract_text_frame_fixed(shape.text_frame, shape)
-        elif hasattr(shape, 'text') and shape.text:
-            return self.extract_plain_text(shape)
-        return None
+        """Extract shape content with proper type detection - v14 approach BUT capture shape info for diagram analysis"""
+        # Capture basic shape info for later diagram analysis (with safe error handling)
+        shape_info = {
+            "shape_type": "unknown",
+            "auto_shape_type": None,
+            "position": {
+                "top": getattr(shape, 'top', 0),
+                "left": getattr(shape, 'left', 0),
+                "width": getattr(shape, 'width', 0),
+                "height": getattr(shape, 'height', 0)
+            }
+        }
+
+        # Safely get shape type
+        try:
+            if hasattr(shape, 'shape_type'):
+                shape_info["shape_type"] = str(shape.shape_type).split('.')[-1]  # Get just the name part
+        except:
+            shape_info["shape_type"] = "unknown"
+
+        # Check for auto shape type (for arrows and special shapes)
+        try:
+            if hasattr(shape, 'auto_shape_type'):
+                shape_info["auto_shape_type"] = str(shape.auto_shape_type).split('.')[-1]
+        except:
+            pass
+
+        # MAIN EXTRACTION - v14 approach that works
+        content_block = None
+
+        try:
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                content_block = self.extract_image(shape)
+            elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+                content_block = self.extract_table(shape.table)
+            elif hasattr(shape, 'has_chart') and shape.has_chart:
+                content_block = self.extract_chart(shape)
+            elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                content_block = self.extract_group(shape)
+            elif hasattr(shape, 'text_frame') and shape.text_frame:
+                content_block = self.extract_text_frame_fixed(shape.text_frame, shape)
+            elif hasattr(shape, 'text') and shape.text:
+                content_block = self.extract_plain_text(shape)
+        except Exception as e:
+            print(f"Warning: Error extracting shape content: {e}")
+            return None
+
+        # DIAGRAM ANALYSIS - add shape info for diagram detection (with safe checks)
+        if not content_block:
+            # For shapes without text content, create minimal blocks for diagram analysis
+            try:
+                if shape.shape_type == MSO_SHAPE_TYPE.LINE:
+                    content_block = {"type": "line", "line_type": "simple"}
+                elif shape.shape_type == MSO_SHAPE_TYPE.CONNECTOR:
+                    content_block = {"type": "line", "line_type": "connector"}
+                elif shape.shape_type == MSO_SHAPE_TYPE.FREEFORM:
+                    content_block = {"type": "line", "line_type": "freeform"}
+                elif shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+                    if self.is_arrow_shape(shape_info["auto_shape_type"]):
+                        content_block = {"type": "arrow", "arrow_type": shape_info["auto_shape_type"]}
+                    else:
+                        content_block = {"type": "shape", "shape_subtype": "auto_shape"}
+                else:
+                    content_block = {"type": "shape", "shape_subtype": "generic"}
+            except Exception as e:
+                # Fallback for any shape type issues
+                content_block = {"type": "shape", "shape_subtype": "unknown"}
+
+        # Add shape analysis info to content block for diagram detection
+        if content_block:
+            try:
+                content_block.update(shape_info)
+            except Exception as e:
+                print(f"Warning: Error adding shape info: {e}")
+
+        return content_block
+
+    def is_arrow_shape(self, auto_shape_type):
+        """Check if an auto shape type is an arrow"""
+        if not auto_shape_type:
+            return False
+
+        arrow_types = [
+            "LEFT_ARROW", "DOWN_ARROW", "UP_ARROW", "RIGHT_ARROW",
+            "LEFT_RIGHT_ARROW", "UP_DOWN_ARROW", "QUAD_ARROW",
+            "LEFT_RIGHT_UP_ARROW", "BENT_ARROW", "U_TURN_ARROW",
+            "CURVED_LEFT_ARROW", "CURVED_RIGHT_ARROW",
+            "CURVED_UP_ARROW", "CURVED_DOWN_ARROW",
+            "STRIPED_RIGHT_ARROW", "NOTCHED_RIGHT_ARROW",
+            "BLOCK_ARC"
+        ]
+
+        return any(arrow_type in auto_shape_type for arrow_type in arrow_types)
 
     def extract_text_frame_fixed(self, text_frame, shape):
         """Fixed text extraction with proper bullet detection"""
@@ -433,39 +950,6 @@ class PowerPointProcessor:
 
         return False
 
-    def extract_runs(self, runs):
-        """Extract formatting and hyperlinks from runs"""
-        formatted_runs = []
-
-        for run in runs:
-            run_data = {
-                "text": run.text,
-                "bold": False,
-                "italic": False,
-                "hyperlink": None
-            }
-
-            # Get formatting
-            try:
-                font = run.font
-                if hasattr(font, 'bold') and font.bold:
-                    run_data["bold"] = True
-                if hasattr(font, 'italic') and font.italic:
-                    run_data["italic"] = True
-            except:
-                pass
-
-            # Get hyperlinks
-            try:
-                if hasattr(run, 'hyperlink') and run.hyperlink and run.hyperlink.address:
-                    run_data["hyperlink"] = self.fix_url(run.hyperlink.address)
-            except:
-                pass
-
-            formatted_runs.append(run_data)
-
-        return formatted_runs
-
     def extract_plain_text(self, shape):
         """Extract plain text from shape"""
         if not hasattr(shape, 'text') or not shape.text:
@@ -637,61 +1121,85 @@ class PowerPointProcessor:
             }
 
     def extract_group(self, shape):
-        """Extract content from grouped shapes"""
+        """Extract content from grouped shapes - EXACT v14 approach that was working"""
         try:
-            group_data = {
-                "type": "group",
-                "shapes": [],
-                "connections": [],
-                "hyperlink": self.extract_shape_hyperlink(shape)
-            }
+            # For grouped shapes, extract text from all child shapes
+            extracted_blocks = []
 
-            # Process shapes in the group
             for child_shape in shape.shapes:
-                child_data = self.extract_shape_content(child_shape)
-                if child_data:
-                    # Add position information for diagram analysis
-                    if hasattr(child_shape, 'top') and hasattr(child_shape, 'left'):
-                        child_data["position"] = {
-                            "top": child_shape.top,
-                            "left": child_shape.left,
-                            "width": getattr(child_shape, 'width', 0),
-                            "height": getattr(child_shape, 'height', 0)
-                        }
-                    group_data["shapes"].append(child_data)
+                # Extract text directly from each child shape - EXACTLY like v14
+                if hasattr(child_shape, 'text_frame') and child_shape.text_frame:
+                    text_block = self.extract_text_frame_fixed(child_shape.text_frame, child_shape)
+                    if text_block:
+                        extracted_blocks.append(text_block)
+                elif hasattr(child_shape, 'text') and child_shape.text:
+                    text_block = self.extract_plain_text(child_shape)
+                    if text_block:
+                        extracted_blocks.append(text_block)
+                elif child_shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    image_block = self.extract_image(child_shape)
+                    if image_block:
+                        extracted_blocks.append(image_block)
+                elif child_shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+                    table_block = self.extract_table(child_shape.table)
+                    if table_block:
+                        extracted_blocks.append(table_block)
+                elif hasattr(child_shape, 'has_chart') and child_shape.has_chart:
+                    chart_block = self.extract_chart(child_shape)
+                    if chart_block:
+                        extracted_blocks.append(chart_block)
+                # Handle nested groups recursively
+                elif child_shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                    nested_group = self.extract_group(child_shape)
+                    if nested_group and nested_group.get("extracted_blocks"):
+                        extracted_blocks.extend(nested_group["extracted_blocks"])
 
-            # Analyze for potential diagram patterns
-            group_data["diagram_type"] = self.analyze_diagram_pattern(group_data["shapes"])
+            # Return a simplified group structure
+            if extracted_blocks:
+                return {
+                    "type": "group",
+                    "extracted_blocks": extracted_blocks,
+                    "hyperlink": self.extract_shape_hyperlink(shape)
+                }
 
-            return group_data
+            return None
 
-        except Exception:
+        except Exception as e:
+            print(f"Error extracting group: {e}")
             return None
 
     def analyze_diagram_pattern(self, shapes):
-        """Analyze shapes to determine if they form a recognizable diagram pattern"""
+        """Analyze shapes to determine if they form a recognizable diagram pattern - be very conservative"""
         if not shapes:
-            return "unknown"
+            return "text_group"  # Changed default
 
         text_shapes = [s for s in shapes if s.get("type") == "text"]
+        non_text_shapes = [s for s in shapes if s.get("type") != "text"]
 
         # Look for keywords to identify diagram type
-        flowchart_keywords = ["start", "end", "process", "decision", "flow"]
-        org_keywords = ["manager", "director", "ceo", "team", "department"]
+        flowchart_keywords = ["start", "end", "process", "decision", "flow", "workflow", "step", "next", "previous"]
+        org_keywords = ["manager", "director", "ceo", "team", "department", "reports to", "supervisor"]
 
         all_text = " ".join([
             " ".join([p.get("clean_text", "") for p in shape.get("paragraphs", [])])
             for shape in text_shapes
         ]).lower()
 
-        if any(keyword in all_text for keyword in flowchart_keywords):
+        # Only treat as diagram if we have very strong indicators
+        strong_flowchart_match = sum(1 for keyword in flowchart_keywords if keyword in all_text) >= 2
+        strong_org_match = sum(1 for keyword in org_keywords if keyword in all_text) >= 2
+        has_non_text_shapes = len(non_text_shapes) > 0
+        many_shapes = len(shapes) >= 6  # Raised threshold
+
+        if strong_flowchart_match and (has_non_text_shapes or many_shapes):
             return "flowchart"
-        elif any(keyword in all_text for keyword in org_keywords):
+        elif strong_org_match and (has_non_text_shapes or many_shapes):
             return "org_chart"
-        elif len(shapes) >= 3:
+        elif has_non_text_shapes and len(shapes) >= 4:
             return "diagram"
 
-        return "unknown"
+        # Default to text group for most cases
+        return "text_group"
 
     def extract_shape_hyperlink(self, shape):
         """Extract shape-level hyperlink"""
@@ -719,7 +1227,7 @@ class PowerPointProcessor:
 
         return url
 
-    def convert_structured_data_to_markdown(self, data):
+    def convert_structured_data_to_markdown(self, data, convert_slide_titles=True):
         """Convert structured data to markdown"""
         markdown_parts = []
 
@@ -739,7 +1247,575 @@ class PowerPointProcessor:
                 elif block["type"] == "group":
                     markdown_parts.append(self.convert_group_to_markdown(block))
 
-        return "\n\n".join(filter(None, markdown_parts))
+    def convert_structured_data_to_markdown(self, data, convert_slide_titles=True):
+        """Convert structured data to markdown"""
+        markdown_parts = []
+
+        for slide in data["slides"]:
+            # Add slide marker
+            markdown_parts.append(f"\n<!-- Slide {slide['slide_number']} -->\n")
+
+            for block in slide["content_blocks"]:
+                if block["type"] == "text":
+                    markdown_parts.append(self.convert_text_block_to_markdown(block))
+                elif block["type"] == "table":
+                    markdown_parts.append(self.convert_table_to_markdown(block))
+                elif block["type"] == "image":
+                    markdown_parts.append(self.convert_image_to_markdown(block))
+                elif block["type"] == "chart":
+                    markdown_parts.append(self.convert_chart_to_markdown(block))
+                elif block["type"] == "group":
+                    markdown_parts.append(self.convert_group_to_markdown(block))
+
+        markdown_content = "\n\n".join(filter(None, markdown_parts))
+
+        # Post-process to convert slide titles from bullets to H1 headings if requested
+        if convert_slide_titles:
+            markdown_content = self.convert_slide_titles_to_headings(markdown_content)
+
+        return markdown_content
+
+    def convert_slide_titles_to_headings(self, markdown_content):
+        """
+        Post-process markdown to convert slide titles from bullet points to H1 headings.
+
+        This function identifies likely slide titles by looking for bullet points that appear
+        immediately after slide markers and have title-like characteristics.
+        """
+        lines = markdown_content.split('\n')
+        processed_lines = []
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            processed_lines.append(line)
+
+            # Check if this is a slide marker
+            if line.strip().startswith('<!-- Slide ') and line.strip().endswith(' -->'):
+                # Look ahead for the first non-empty content line
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    processed_lines.append(lines[j])
+                    j += 1
+
+                # Check if the next content line is a bullet that looks like a title
+                if j < len(lines):
+                    next_line = lines[j].strip()
+                    if self.is_likely_slide_title(next_line):
+                        # Convert bullet to H1 heading
+                        title_text = self.extract_title_from_bullet(next_line)
+                        processed_lines.append(f"\n# {title_text}")
+                        i = j  # Skip the original bullet line
+                    else:
+                        i = j - 1  # Process the next line normally
+                else:
+                    break
+
+            i += 1
+
+        return '\n'.join(processed_lines)
+
+    def add_diagram_candidate_markers(self, markdown_content, structured_data):
+        """
+        Secondary process: Add diagram candidate markers based on scoring system
+        """
+        # Analyze each slide for diagram probability
+        diagram_slides = []
+
+        for slide_idx, slide in enumerate(structured_data["slides"]):
+            score_analysis = self.score_slide_for_diagram(slide)
+            if score_analysis["probability"] >= 40:  # 40%+ probability threshold
+                diagram_slides.append({
+                    "slide": slide_idx + 1,
+                    "analysis": score_analysis
+                })
+
+        # Add markers for slides with high diagram probability
+        if diagram_slides:
+            lines = markdown_content.split('\n')
+
+            for diagram_slide in diagram_slides:
+                slide_num = diagram_slide["slide"]
+                analysis = diagram_slide["analysis"]
+
+                # Create detailed comment
+                comment = f"\n<!-- DIAGRAM_DETECTED: probability={analysis['probability']}%, score={analysis['total_score']}, reasons={', '.join(analysis['reasons'])} -->\n"
+
+                # Find the slide and add comment after it
+                slide_marker = f"<!-- Slide {slide_num} -->"
+                for i, line in enumerate(lines):
+                    if slide_marker in line:
+                        # Find the end of this slide's content
+                        next_slide_idx = len(lines)
+                        for j in range(i + 1, len(lines)):
+                            if lines[j].strip().startswith('<!-- Slide '):
+                                next_slide_idx = j
+                                break
+
+                        # Insert before next slide
+                        lines.insert(next_slide_idx, comment)
+                        break
+
+            markdown_content = '\n'.join(lines)
+
+        return markdown_content
+
+    def score_slide_for_diagram(self, slide_data):
+        """
+        Score a slide for diagram probability using our rules
+        """
+        content_blocks = slide_data.get("content_blocks", [])
+
+        # Collect all shapes and lines
+        shapes = []
+        lines = []
+        arrows = []
+        text_blocks = []
+
+        for block in content_blocks:
+            if block.get("type") == "line":
+                lines.append(block)
+            elif block.get("type") == "arrow":
+                arrows.append(block)
+            elif block.get("type") == "text":
+                text_blocks.append(block)
+                shapes.append(block)
+            elif block.get("type") in ["shape", "image", "chart"]:
+                shapes.append(block)
+            elif block.get("type") == "group":
+                # Recursively analyze group contents
+                group_analysis = self._analyze_group_contents(block)
+                shapes.extend(group_analysis["shapes"])
+                lines.extend(group_analysis["lines"])
+                arrows.extend(group_analysis["arrows"])
+                text_blocks.extend(group_analysis["text_blocks"])
+
+        # Calculate score based on rules
+        score = 0
+        reasons = []
+
+        # Rule 1: Line/Arrow threshold (20+ points each)
+        if len(arrows) > 0:
+            score += 20
+            reasons.append(f"block_arrows:{len(arrows)}")
+
+        if len(lines) >= 3:
+            score += 20
+            reasons.append(f"connector_lines:{len(lines)}")
+
+        # Rule 2: Line-to-shape ratio (15 points)
+        total_lines = len(lines) + len(arrows)
+        if len(shapes) > 0:
+            line_ratio = total_lines / len(shapes)
+            if line_ratio >= 0.5:
+                score += 15
+                reasons.append(f"line_ratio:{line_ratio:.1f}")
+
+        # Rule 3: Spatial layout analysis (10-15 points)
+        layout_score = self._analyze_spatial_layout(shapes)
+        score += layout_score["score"]
+        if layout_score["score"] > 0:
+            reasons.append(f"layout:{layout_score['type']}")
+
+        # Rule 4: Shape variety (10-15 points)
+        variety_score = self._analyze_shape_variety(shapes)
+        score += variety_score
+        if variety_score > 0:
+            reasons.append(f"variety:{variety_score}")
+
+        # Rule 5: Text density analysis (10 points)
+        text_score = self._analyze_text_density(text_blocks)
+        score += text_score
+        if text_score > 0:
+            reasons.append(f"short_text:{text_score}")
+
+        # Rule 6: Flow patterns (20 points)
+        flow_score = self._analyze_flow_patterns(shapes, lines, arrows, text_blocks)
+        score += flow_score
+        if flow_score > 0:
+            reasons.append(f"flow_pattern:{flow_score}")
+
+        # Negative indicators
+        negative_score = self._analyze_negative_indicators(text_blocks, shapes)
+        score += negative_score  # negative_score will be negative or 0
+        if negative_score < 0:
+            reasons.append(f"negatives:{negative_score}")
+
+        # Convert score to probability
+        if score >= 60:
+            probability = 95
+        elif score >= 40:
+            probability = 75
+        elif score >= 20:
+            probability = 40
+        else:
+            probability = 10
+
+        return {
+            "total_score": score,
+            "probability": probability,
+            "reasons": reasons,
+            "shape_count": len(shapes),
+            "line_count": len(lines),
+            "arrow_count": len(arrows)
+        }
+
+    def _analyze_group_contents(self, group_block):
+        """Recursively analyze group contents for diagram elements"""
+        result = {"shapes": [], "lines": [], "arrows": [], "text_blocks": []}
+
+        for extracted_block in group_block.get("extracted_blocks", []):
+            if extracted_block.get("type") == "line":
+                result["lines"].append(extracted_block)
+            elif extracted_block.get("type") == "arrow":
+                result["arrows"].append(extracted_block)
+            elif extracted_block.get("type") == "text":
+                result["text_blocks"].append(extracted_block)
+                result["shapes"].append(extracted_block)
+            elif extracted_block.get("type") in ["shape", "image", "chart"]:
+                result["shapes"].append(extracted_block)
+
+        return result
+
+    def _analyze_spatial_layout(self, shapes):
+        """Analyze spatial layout patterns"""
+        if len(shapes) < 3:
+            return {"score": 0, "type": "insufficient"}
+
+        positions = []
+        for shape in shapes:
+            pos = shape.get("position")
+            if pos:
+                positions.append((pos["top"], pos["left"]))
+
+        if len(positions) < 3:
+            return {"score": 0, "type": "no_position_data"}
+
+        # Calculate spread
+        tops = [p[0] for p in positions]
+        lefts = [p[1] for p in positions]
+
+        top_range = max(tops) - min(tops) if tops else 0
+        left_range = max(lefts) - min(lefts) if lefts else 0
+
+        # Check for grid-like arrangement
+        unique_tops = len(set(round(t / 100000) for t in tops))  # Group by approximate position
+        unique_lefts = len(set(round(l / 100000) for l in lefts))
+
+        if unique_tops >= 2 and unique_lefts >= 2:
+            return {"score": 15, "type": "grid_layout"}
+        elif top_range > 1000000 and left_range > 1000000:
+            return {"score": 10, "type": "spread_layout"}
+        else:
+            return {"score": 0, "type": "linear_layout"}
+
+    def _analyze_shape_variety(self, shapes):
+        """Analyze variety in shape types and sizes"""
+        if len(shapes) < 2:
+            return 0
+
+        shape_types = set()
+        sizes = []
+
+        for shape in shapes:
+            shape_types.add(shape.get("type", "unknown"))
+            pos = shape.get("position")
+            if pos:
+                size = pos["width"] * pos["height"]
+                sizes.append(size)
+
+        score = 0
+
+        # Multiple shape types
+        if len(shape_types) >= 3:
+            score += 15
+        elif len(shape_types) >= 2:
+            score += 10
+
+        # Consistent sizing (indicates process flow)
+        if len(sizes) >= 3:
+            avg_size = sum(sizes) / len(sizes)
+            variations = [abs(size - avg_size) / avg_size for size in sizes if avg_size > 0]
+            if variations and max(variations) < 0.5:  # Less than 50% variation
+                score += 5
+
+        return score
+
+    def _analyze_text_density(self, text_blocks):
+        """Analyze text characteristics for diagram indicators"""
+        if not text_blocks:
+            return 0
+
+        short_text_count = 0
+        total_blocks = len(text_blocks)
+
+        for block in text_blocks:
+            # Count average words per paragraph
+            total_words = 0
+            para_count = 0
+
+            for para in block.get("paragraphs", []):
+                clean_text = para.get("clean_text", "")
+                if clean_text:
+                    words = len(clean_text.split())
+                    total_words += words
+                    para_count += 1
+
+            if para_count > 0:
+                avg_words = total_words / para_count
+                if avg_words <= 5:  # Short labels
+                    short_text_count += 1
+
+        # Score based on percentage of short text blocks
+        if total_blocks > 0:
+            short_ratio = short_text_count / total_blocks
+            if short_ratio >= 0.7:  # 70%+ short text
+                return 10
+            elif short_ratio >= 0.5:  # 50%+ short text
+                return 5
+
+        return 0
+
+    def _analyze_flow_patterns(self, shapes, lines, arrows, text_blocks):
+        """Analyze for flow patterns and process keywords"""
+        score = 0
+
+        # Check for start/end keywords
+        flow_keywords = ["start", "begin", "end", "finish", "process", "step", "decision"]
+        action_words = ["create", "update", "check", "verify", "send", "receive", "analyze"]
+
+        all_text = ""
+        for block in text_blocks:
+            for para in block.get("paragraphs", []):
+                all_text += " " + para.get("clean_text", "").lower()
+
+        flow_matches = sum(1 for keyword in flow_keywords if keyword in all_text)
+        action_matches = sum(1 for keyword in action_words if keyword in all_text)
+
+        if flow_matches >= 2:
+            score += 20
+        elif flow_matches >= 1:
+            score += 10
+
+        if action_matches >= 3:
+            score += 10
+
+        # Bonus for having both shapes and connecting elements
+        if len(shapes) >= 3 and (len(lines) > 0 or len(arrows) > 0):
+            score += 15
+
+        return score
+
+    def _analyze_negative_indicators(self, text_blocks, shapes):
+        """Check for negative indicators that suggest NOT a diagram"""
+        score = 0
+
+        # Check for long paragraphs
+        long_text_count = 0
+        bullet_count = 0
+
+        for block in text_blocks:
+            for para in block.get("paragraphs", []):
+                clean_text = para.get("clean_text", "")
+                if clean_text:
+                    word_count = len(clean_text.split())
+                    if word_count > 20:  # Long paragraph
+                        long_text_count += 1
+
+                    # Check for bullet points
+                    if para.get("hints", {}).get("is_bullet", False):
+                        bullet_count += 1
+
+        # Penalize long text
+        if long_text_count >= 2:
+            score -= 15
+
+        # Penalize if mostly bullet points
+        total_paras = sum(len(block.get("paragraphs", [])) for block in text_blocks)
+        if total_paras > 0 and bullet_count / total_paras > 0.8:
+            score -= 10
+
+        # Penalize single column layout (all shapes vertically aligned)
+        if len(shapes) >= 3:
+            positions = [s.get("position") for s in shapes if s.get("position")]
+            if len(positions) >= 3:
+                lefts = [p["left"] for p in positions]
+                left_variance = max(lefts) - min(lefts) if lefts else 0
+                if left_variance < 500000:  # Very narrow horizontal spread
+                    score -= 10
+
+        return score
+
+    def analyze_group_for_diagram(self, group_block):
+        """
+        Analyze a group to determine if it might be a diagram
+        Returns analysis with confidence score
+        """
+        shapes = group_block.get("shapes", [])
+        text_shapes = [s for s in shapes if s.get("type") == "text"]
+        non_text_shapes = [s for s in shapes if s.get("type") != "text"]
+
+        analysis = {
+            "is_diagram": False,
+            "type": "unknown",
+            "confidence": 0,
+            "shape_count": len(shapes),
+            "reasons": []
+        }
+
+        # Quick exit for simple cases
+        if len(shapes) < 3:
+            return analysis
+
+        # Gather all text content
+        all_text = ""
+        for shape in text_shapes:
+            for para in shape.get("paragraphs", []):
+                all_text += " " + para.get("clean_text", "")
+        all_text = all_text.lower()
+
+        confidence = 0
+
+        # Check for diagram keywords
+        flowchart_keywords = ["start", "end", "process", "decision", "flow", "workflow", "step"]
+        org_keywords = ["manager", "director", "ceo", "team", "department", "reports to"]
+        diagram_keywords = ["system", "component", "module", "architecture", "structure"]
+
+        flowchart_matches = sum(1 for kw in flowchart_keywords if kw in all_text)
+        org_matches = sum(1 for kw in org_keywords if kw in all_text)
+        diagram_matches = sum(1 for kw in diagram_keywords if kw in all_text)
+
+        if flowchart_matches >= 2:
+            analysis["type"] = "flowchart"
+            confidence += 40
+            analysis["reasons"].append(f"Flowchart keywords: {flowchart_matches}")
+        elif org_matches >= 2:
+            analysis["type"] = "org_chart"
+            confidence += 40
+            analysis["reasons"].append(f"Org chart keywords: {org_matches}")
+        elif diagram_matches >= 2:
+            analysis["type"] = "diagram"
+            confidence += 30
+            analysis["reasons"].append(f"Diagram keywords: {diagram_matches}")
+
+        # Check for non-text shapes (images, charts, etc.)
+        if non_text_shapes:
+            confidence += 20
+            analysis["reasons"].append(f"Non-text shapes: {len(non_text_shapes)}")
+
+        # Check for many shapes
+        if len(shapes) >= 6:
+            confidence += 15
+            analysis["reasons"].append(f"Many shapes: {len(shapes)}")
+        elif len(shapes) >= 4:
+            confidence += 10
+
+        # Check for complex positioning
+        if self.has_complex_positioning_simple(shapes):
+            confidence += 15
+            analysis["reasons"].append("Complex positioning")
+
+        analysis["confidence"] = confidence
+        analysis["is_diagram"] = confidence >= 50  # Threshold for diagram detection
+
+        return analysis
+
+    def has_complex_positioning_simple(self, shapes):
+        """Simple check for complex positioning"""
+        positions = []
+        for shape in shapes:
+            pos = shape.get("position")
+            if pos:
+                positions.append((pos["top"], pos["left"]))
+
+        if len(positions) < 3:
+            return False
+
+        # Check if shapes are spread out (not just stacked vertically)
+        tops = [p[0] for p in positions]
+        lefts = [p[1] for p in positions]
+
+        top_range = max(tops) - min(tops) if tops else 0
+        left_range = max(lefts) - min(lefts) if lefts else 0
+
+        # If both horizontal and vertical spread, likely complex layout
+        return top_range > 500000 and left_range > 1000000  # PowerPoint units
+
+    def is_likely_slide_title(self, line):
+        """
+        Determine if a line is likely a slide title based on formatting and content.
+
+        Args:
+            line (str): The line to evaluate
+
+        Returns:
+            bool: True if the line appears to be a slide title
+        """
+        if not line.strip():
+            return False
+
+        # Must be a bullet point to be converted
+        if not line.startswith('- '):
+            return False
+
+        # Extract the text content
+        text_content = line[2:].strip()
+
+        # Title characteristics
+        title_indicators = [
+            len(text_content) <= 150,  # Reasonable title length
+            not text_content.endswith(('.', '!', '?', ';', ':')),  # Titles typically don't end with punctuation
+            not self._contains_multiple_sentences(text_content),  # Titles are usually single phrases
+            not text_content.lower().startswith(('the following', 'here are', 'this slide', 'key points')),
+            # Avoid descriptive text
+        ]
+
+        # Additional positive indicators
+        positive_indicators = [
+            text_content.isupper(),  # All caps suggests title
+            text_content.istitle(),  # Title case suggests title
+            len(text_content.split()) <= 10,  # Short phrases are more likely titles
+            any(word in text_content.lower() for word in
+                ['overview', 'introduction', 'conclusion', 'agenda', 'objectives']),  # Common title words
+        ]
+
+        # Must meet basic criteria and have at least one positive indicator
+        basic_criteria_met = all(title_indicators)
+        has_positive_indicator = any(positive_indicators)
+
+        return basic_criteria_met and (has_positive_indicator or len(text_content.split()) <= 6)
+
+    def extract_title_from_bullet(self, bullet_line):
+        """
+        Extract clean title text from a bullet point line.
+
+        Args:
+            bullet_line (str): The bullet point line (e.g., "- Title Text")
+
+        Returns:
+            str: Clean title text
+        """
+        # Remove bullet prefix
+        title_text = bullet_line[2:].strip()
+
+        # Clean up common title artifacts
+        title_text = title_text.strip('*_`')  # Remove markdown formatting artifacts
+
+        return title_text
+
+    def _contains_multiple_sentences(self, text):
+        """
+        Check if text contains multiple sentences.
+
+        Args:
+            text (str): Text to check
+
+        Returns:
+            bool: True if text appears to contain multiple sentences
+        """
+        # Simple heuristic: look for sentence-ending punctuation followed by space and capital letter
+        sentence_pattern = r'[.!?]\s+[A-Z]'
+        return bool(re.search(sentence_pattern, text))
 
     def convert_text_block_to_markdown(self, block):
         """Convert text block to markdown with proper formatting"""
@@ -880,36 +1956,77 @@ class PowerPointProcessor:
         return chart_md
 
     def convert_group_to_markdown(self, block):
-        """Convert grouped shapes to markdown with diagram analysis"""
-        diagram_type = block.get("diagram_type", "unknown")
+        """Convert grouped shapes to markdown - handle all shape types"""
+        # Get the extracted blocks from the group
+        extracted_blocks = block.get("extracted_blocks", [])
 
-        # Start with diagram identification
-        group_md = f"**Diagram ({diagram_type})**\n\n"
+        if not extracted_blocks:
+            return ""
 
-        # Convert individual shapes
-        shape_content = []
-        for shape in block.get("shapes", []):
-            if shape.get("type") == "text":
-                content = self.convert_text_block_to_markdown(shape)
+        # Convert each extracted block to markdown
+        content_parts = []
+
+        for extracted_block in extracted_blocks:
+            if extracted_block["type"] == "text":
+                content = self.convert_text_block_to_markdown(extracted_block)
                 if content:
-                    shape_content.append(content)
-            elif shape.get("type") == "image":
-                image_md = self.convert_image_to_markdown(shape)
-                if image_md:
-                    shape_content.append(image_md)
+                    content_parts.append(content)
+            elif extracted_block["type"] == "image":
+                content = self.convert_image_to_markdown(extracted_block)
+                if content:
+                    content_parts.append(content)
+            elif extracted_block["type"] == "table":
+                content = self.convert_table_to_markdown(extracted_block)
+                if content:
+                    content_parts.append(content)
+            elif extracted_block["type"] == "chart":
+                content = self.convert_chart_to_markdown(extracted_block)
+                if content:
+                    content_parts.append(content)
+            elif extracted_block["type"] == "line":
+                # Lines don't produce visible content but are tracked for diagram analysis
+                pass
+            elif extracted_block["type"] == "arrow":
+                # Arrows don't produce visible content but are tracked for diagram analysis
+                pass
+            elif extracted_block["type"] == "shape":
+                # Generic shapes might have minimal content
+                content = f"[Shape: {extracted_block.get('shape_subtype', 'unknown')}]"
+                content_parts.append(content)
 
-        if shape_content:
-            group_md += "\n".join(shape_content)
+        # Join all content together
+        group_md = "\n\n".join(content_parts) if content_parts else ""
 
-        # Add diagram conversion hint
-        group_md += f"\n\n<!-- DIAGRAM_CANDIDATE: {diagram_type}, shapes={len(block.get('shapes', []))} -->\n"
-
-        if block.get("hyperlink"):
+        # Add shape-level hyperlink if present
+        if block.get("hyperlink") and group_md:
             group_md = f"[{group_md}]({block['hyperlink']})"
 
         return group_md
 
-    # Additional utility methods for the complete superfile functionality
+    def is_actual_diagram(self, block, text_shapes_count, other_shapes_count):
+        """
+        Determine if a group represents an actual diagram or just grouped text
+        Be very conservative - default to treating as grouped text
+        """
+        diagram_type = block.get("diagram_type", "text_group")
+
+        # If it's identified as just a text group, definitely not a diagram
+        if diagram_type == "text_group":
+            return False
+
+        # Only treat as diagram if we have very strong indicators
+        if diagram_type in ["flowchart", "org_chart"]:
+            # Even then, require additional evidence
+            return other_shapes_count > 0 or text_shapes_count >= 5
+
+        # For "diagram" type, require non-text shapes
+        if diagram_type == "diagram":
+            return other_shapes_count > 0
+
+        # Default: treat as grouped text
+        return False
+
+    # Additional utility methods for the complete functionality
 
     def validate_file(self, file_path):
         """Validate that the file exists and is a supported PowerPoint format"""
@@ -1027,18 +2144,19 @@ class PowerPointProcessor:
             "metadata": metadata,
             "content": structured_data,
             "export_timestamp": datetime.now().isoformat(),
-            "processor_version": "fixed_v2.0"
+            "processor_version": "fixed_v3.0"
         }
 
         return json.dumps(export_data, indent=2, default=str)
 
-    def process_file_complete(self, file_path, output_format="markdown"):
+    def process_file_complete(self, file_path, output_format="markdown", convert_slide_titles=True):
         """
         Complete file processing with multiple output options
 
         Args:
             file_path (str): Path to the PowerPoint file
             output_format (str): "markdown", "json", "text", or "summary"
+            convert_slide_titles (bool): Whether to convert slide titles from bullets to H1 headings
 
         Returns:
             dict: Contains the processed content and metadata
@@ -1063,7 +2181,7 @@ class PowerPointProcessor:
         }
 
         if output_format == "markdown":
-            markdown = self.convert_structured_data_to_markdown(structured_data)
+            markdown = self.convert_structured_data_to_markdown(structured_data, convert_slide_titles)
             result["content"] = self.add_pptx_metadata_for_claude(markdown, metadata)
         elif output_format == "json":
             result["content"] = structured_data
@@ -1169,27 +2287,32 @@ class PowerPointProcessor:
 
 # Convenience functions for backward compatibility and ease of use
 
-def convert_pptx_to_markdown_enhanced(file_path):
+def convert_pptx_to_markdown_enhanced(file_path, convert_slide_titles=True):
     """
     Convenience function to maintain backward compatibility
+
+    Args:
+        file_path (str): Path to the PowerPoint file
+        convert_slide_titles (bool): Whether to convert slide titles from bullets to H1 headings
     """
     processor = PowerPointProcessor()
-    return processor.convert_pptx_to_markdown_enhanced(file_path)
+    return processor.convert_pptx_to_markdown_enhanced(file_path, convert_slide_titles)
 
 
-def process_powerpoint_file(file_path, output_format="markdown"):
+def process_powerpoint_file(file_path, output_format="markdown", convert_slide_titles=True):
     """
     Convenience function for complete file processing
 
     Args:
         file_path (str): Path to the PowerPoint file
         output_format (str): "markdown", "json", "text", or "summary"
+        convert_slide_titles (bool): Whether to convert slide titles from bullets to H1 headings
 
     Returns:
         dict: Processed content and metadata
     """
     processor = PowerPointProcessor()
-    return processor.process_file_complete(file_path, output_format)
+    return processor.process_file_complete(file_path, output_format, convert_slide_titles)
 
 
 def debug_bullets(file_path, slide_num=None, shape_num=None):
