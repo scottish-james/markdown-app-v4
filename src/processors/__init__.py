@@ -1,22 +1,45 @@
 """
-UI Components Module
-This module contains UI components and utilities for the Streamlit interface.
+Document Processors Module
+Refactored modular architecture with PowerPoint subfolder
 """
-from src.ui.components import setup_page_config, display_supported_formats
+
+# PowerPoint processing (from subfolder)
+from .powerpoint import (
+    PowerPointProcessor,
+    convert_pptx_to_markdown_enhanced,
+    process_powerpoint_file,
+    AccessibilityOrderExtractor,
+    ContentExtractor,
+    TextProcessor,
+    DiagramAnalyzer,
+    MarkdownConverter,
+    MetadataExtractor
+)
+
+# Folder processing (existing)
+from .folder_processor import process_folder, find_compatible_files
+
+# Screenshot processing (existing)
+from .diagram_screenshot_processor import DiagramScreenshotProcessor
 
 __all__ = [
-    'setup_page_config',
-    'display_supported_formats'
-]
+    # PowerPoint processing
+    'PowerPointProcessor',
+    'convert_pptx_to_markdown_enhanced',
+    'process_powerpoint_file',
 
-# src/processors/__init__.py
-"""
-Processors Module
-This module contains batch processors for handling multiple files.
-"""
-from src.processors.folder_processor import process_folder, find_compatible_files
+    # PowerPoint components (for advanced usage)
+    'AccessibilityOrderExtractor',
+    'ContentExtractor',
+    'TextProcessor',
+    'DiagramAnalyzer',
+    'MarkdownConverter',
+    'MetadataExtractor',
 
-__all__ = [
+    # Folder processing
     'process_folder',
-    'find_compatible_files'
+    'find_compatible_files',
+
+    # Screenshot processing
+    'DiagramScreenshotProcessor'
 ]
