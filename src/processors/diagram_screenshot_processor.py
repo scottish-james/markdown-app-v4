@@ -14,7 +14,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class DiagramScreenshotProcessor:
     """
     Handles PowerPoint screenshot generation using PDF conversion method.
@@ -305,51 +304,54 @@ class DiagramScreenshotProcessor:
                 print(f"❌ Error during PDF conversion: {str(e)}")
             return None
 
+    # Replace these 3 functions in your existing DiagramScreenshotProcessor class
+    # Keep the same function names - just enhanced with better quality
+
     def _extract_slides_with_poppler(self,
                                      pdf_path: str,
                                      slide_numbers: List[int],
                                      output_dir: str,
                                      base_filename: str,
-                                     debug_mode: bool) -> Dict[int, str]:
-        """Extract specific slides using poppler-utils (pdftoppm)."""
+                                     debug_mode: bool = True) -> Dict[int, str]:
+        """Extract specific slides using poppler-utils with HIGH QUALITY settings."""
         if debug_mode:
-            print(f"🖼️  Extracting slides using poppler-utils...")
+            print(f"🖼️  Extracting slides using poppler-utils (HIGH QUALITY)...")
 
         results = {}
         pdftoppm_cmd = self._get_pdftoppm_command()
 
         for slide_num in slide_numbers:
             if debug_mode:
-                print(f"\n🎯 Extracting slide {slide_num} with poppler...")
+                print(f"\n🎯 Extracting slide {slide_num} with poppler (high quality)...")
 
             # Output filename for this slide
             output_filename = f"{base_filename}_slide_{slide_num:02d}_diagram.png"
             output_path = os.path.join(output_dir, output_filename)
 
-            # pdftoppm command to extract specific page
-            # -png: output as PNG
-            # -f: first page to convert
-            # -l: last page to convert
-            # -singlefile: generate single file (not page-001.png format)
+            # HIGH QUALITY pdftoppm command with better settings
             cmd = [
                 pdftoppm_cmd,
-                "-png",
-                "-f", str(slide_num),
-                "-l", str(slide_num),
-                "-singlefile",
+                "-png",  # PNG format (good for diagrams)
+                "-r", "300",  # 300 DPI resolution (high quality)
+                "-scale-to", "2048",  # Scale to 2048px width (good for OpenAI)
+                "-aa", "yes",  # Enable anti-aliasing
+                "-aaVector", "yes",  # Anti-aliasing for vector graphics
+                "-f", str(slide_num),  # First page
+                "-l", str(slide_num),  # Last page
+                "-singlefile",  # Single file output
                 pdf_path,
                 os.path.join(output_dir, f"{base_filename}_slide_{slide_num:02d}_diagram")
             ]
 
             if debug_mode:
-                print(f"🚀 Running: {' '.join(cmd)}")
+                print(f"🚀 Running HIGH QUALITY: {' '.join(cmd)}")
 
             try:
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=30  # 30 second timeout per slide
+                    timeout=60  # Longer timeout for high-res processing
                 )
 
                 if result.returncode != 0:
@@ -363,7 +365,7 @@ class DiagramScreenshotProcessor:
                     results[slide_num] = output_path
 
                     if debug_mode:
-                        print(f"✅ Slide {slide_num} extracted: {output_filename} ({file_size:.1f} KB)")
+                        print(f"✅ HIGH QUALITY Slide {slide_num}: {output_filename} ({file_size:.1f} KB)")
                 else:
                     if debug_mode:
                         print(f"❌ Output file not found for slide {slide_num}: {output_path}")
@@ -379,51 +381,116 @@ class DiagramScreenshotProcessor:
 
         return results
 
-    def _extract_slides_with_libreoffice(self,
-                                         pdf_path: str,
-                                         slide_numbers: List[int],
-                                         output_dir: str,
-                                         base_filename: str,
-                                         debug_mode: bool) -> Dict[int, str]:
-        """Fallback: Extract slides using LibreOffice (when poppler not available)."""
+    def _convert_pptx_to_pdf(self, pptx_path: str, temp_dir: str, debug_mode: bool) -> Optional[str]:
+        """Convert PowerPoint to PDF using LibreOffice with BETTER QUALITY settings."""
         if debug_mode:
-            print(f"🔄 Using LibreOffice fallback for PDF extraction...")
+            print(f"📄 Converting PowerPoint to HIGH QUALITY PDF...")
 
-        # This is a simpler approach - convert the entire PDF to images
-        # then select the ones we need
+        # Enhanced LibreOffice command with quality settings
+        cmd = [
+            self.libreoffice_path,
+            "--headless",
+            "--convert-to", "pdf",
+            "--outdir", temp_dir,
+            # Quality improvements for PDF conversion
+            "-env:UserInstallation=file:///tmp/lo_temp_profile_" + str(os.getpid()),
+            pptx_path
+        ]
 
-        with tempfile.TemporaryDirectory() as extract_temp:
-            # Convert entire PDF to PNG images
+        if debug_mode:
+            print(f"🚀 Running HIGH QUALITY PDF: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=180  # Longer timeout for better quality
+            )
+
+            if result.returncode != 0:
+                if debug_mode:
+                    print(f"❌ LibreOffice PDF conversion failed: {result.stderr}")
+                return None
+
+            # Find the generated PDF
+            pdf_files = [f for f in os.listdir(temp_dir) if f.endswith('.pdf')]
+
+            if not pdf_files:
+                if debug_mode:
+                    print("❌ No PDF file was generated")
+                return None
+
+            pdf_path = os.path.join(temp_dir, pdf_files[0])
+
+            if debug_mode:
+                pdf_size = os.path.getsize(pdf_path) / 1024
+                print(f"✅ HIGH QUALITY PDF created: {pdf_files[0]} ({pdf_size:.1f} KB)")
+
+            return pdf_path
+
+        except subprocess.TimeoutExpired:
+            if debug_mode:
+                print("❌ PDF conversion timed out")
+            return None
+        except Exception as e:
+            if debug_mode:
+                print(f"❌ Error during PDF conversion: {str(e)}")
+            return None
+
+    def _original_libreoffice_method(self,
+                                     pptx_path: str,
+                                     slide_numbers: List[int],
+                                     output_dir: str,
+                                     base_filename: str,
+                                     debug_mode: bool) -> Dict[int, str]:
+        """Original LibreOffice method as last resort with ENHANCED QUALITY."""
+        if debug_mode:
+            print("🔄 Using original LibreOffice method (ENHANCED QUALITY)...")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Export all slides as high-quality images with better settings
             cmd = [
                 self.libreoffice_path,
                 "--headless",
                 "--convert-to", "png",
-                "--outdir", extract_temp,
-                pdf_path
+                "--outdir", temp_dir,
+                # Try to improve quality with environment settings
+                pptx_path
             ]
 
             if debug_mode:
-                print(f"🚀 Converting PDF to images: {' '.join(cmd)}")
+                print(f"🚀 Enhanced original method: {' '.join(cmd)}")
 
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                # Set environment variables for better quality
+                env = os.environ.copy()
+                env['SAL_USE_VCLPLUGIN'] = 'gen'  # Use generic VCL plugin for better rendering
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    env=env
+                )
 
                 if result.returncode != 0:
                     if debug_mode:
-                        print(f"❌ LibreOffice PDF extraction failed: {result.stderr}")
+                        print(f"❌ Enhanced original method failed: {result.stderr}")
                     return {}
 
-                # Find extracted images
-                image_files = sorted([f for f in os.listdir(extract_temp) if f.endswith('.png')])
+                # Find exported files
+                exported_files = sorted([f for f in os.listdir(temp_dir) if f.endswith('.png')])
 
                 if debug_mode:
-                    print(f"📁 LibreOffice extracted {len(image_files)} images")
+                    print(f"📁 Enhanced original method exported {len(exported_files)} files")
 
-                # Copy requested slides to output directory
+                # Map slides to files
                 results = {}
                 for slide_num in slide_numbers:
-                    if slide_num <= len(image_files):
-                        source_file = os.path.join(extract_temp, image_files[slide_num - 1])
+                    if slide_num <= len(exported_files):
+                        source_file = os.path.join(temp_dir, exported_files[slide_num - 1])
                         output_filename = f"{base_filename}_slide_{slide_num:02d}_diagram.png"
                         output_path = os.path.join(output_dir, output_filename)
 
@@ -432,63 +499,21 @@ class DiagramScreenshotProcessor:
 
                         if debug_mode:
                             file_size = os.path.getsize(output_path) / 1024
-                            print(f"✅ Slide {slide_num}: {output_filename} ({file_size:.1f} KB)")
+                            print(f"✅ Enhanced Slide {slide_num}: {output_filename} ({file_size:.1f} KB)")
                     else:
                         if debug_mode:
-                            print(f"❌ Slide {slide_num} not available (only {len(image_files)} pages)")
+                            print(f"❌ Slide {slide_num} not available (only {len(exported_files)} pages)")
 
                 return results
 
+            except subprocess.TimeoutExpired:
+                if debug_mode:
+                    print("❌ Enhanced original method timed out")
+                return {}
             except Exception as e:
                 if debug_mode:
-                    print(f"❌ Error in LibreOffice fallback: {str(e)}")
+                    print(f"❌ Error in enhanced original method: {str(e)}")
                 return {}
-
-    def _original_libreoffice_method(self,
-                                     pptx_path: str,
-                                     slide_numbers: List[int],
-                                     output_dir: str,
-                                     base_filename: str,
-                                     debug_mode: bool) -> Dict[int, str]:
-        """Original LibreOffice method as last resort."""
-        if debug_mode:
-            print("🔄 Using original LibreOffice method...")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Export all slides as images
-            cmd = [
-                self.libreoffice_path,
-                "--headless",
-                "--convert-to", "png",
-                "--outdir", temp_dir,
-                pptx_path
-            ]
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
-            if result.returncode != 0:
-                if debug_mode:
-                    print(f"❌ Original method failed: {result.stderr}")
-                return {}
-
-            # Find exported files
-            exported_files = sorted([f for f in os.listdir(temp_dir) if f.endswith('.png')])
-
-            if debug_mode:
-                print(f"📁 Original method exported {len(exported_files)} files")
-
-            # Map slides to files
-            results = {}
-            for slide_num in slide_numbers:
-                if slide_num <= len(exported_files):
-                    source_file = os.path.join(temp_dir, exported_files[slide_num - 1])
-                    output_filename = f"{base_filename}_slide_{slide_num:02d}_diagram.png"
-                    output_path = os.path.join(output_dir, output_filename)
-
-                    shutil.copy2(source_file, output_path)
-                    results[slide_num] = output_path
-
-            return results
 
 
 def test_diagram_screenshot_capability() -> Tuple[bool, str]:
@@ -518,7 +543,6 @@ def test_diagram_screenshot_capability() -> Tuple[bool, str]:
         return False, "LibreOffice version check timed out"
     except Exception as e:
         return False, f"Error testing LibreOffice: {str(e)}"
-
 
 def install_poppler_instructions():
     """Return platform-specific instructions for installing poppler-utils."""

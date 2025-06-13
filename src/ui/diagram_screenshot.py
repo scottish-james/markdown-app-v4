@@ -1,6 +1,6 @@
 """
-Fixed Screenshot UI - Uses new fallback method for reliable slide export
-Save as: src/ui/diagram_screenshot.py
+Complete Fixed Screenshot UI with OpenAI Integration and Persistence
+Replace your entire src/ui/diagram_screenshot.py with this content
 """
 
 import streamlit as st
@@ -8,17 +8,34 @@ import re
 import tempfile
 import os
 import sys
+import base64
 from io import StringIO
 from contextlib import redirect_stdout
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 
 def render_diagram_screenshot_section():
     """
-    FIXED VERSION - Uses new fallback method for reliable slide screenshots
+    ENHANCED VERSION - Includes OpenAI integration and persistent results
     """
     st.markdown("---")
     st.subheader("📸 Diagram Screenshot Generator")
+
+    # Check if we have OpenAI API key from sidebar
+    if 'openai_api_key' not in st.session_state or not st.session_state.get('openai_api_key'):
+        st.info("💡 **Tip:** Add your OpenAI API key in the sidebar to enable AI diagram analysis")
+
+    # FIXED: Always show existing screenshot results first
+    if 'screenshot_results' in st.session_state and st.session_state.screenshot_results:
+        st.subheader("📊 Current Screenshot Results")
+        _display_all_screenshot_results()
+
+        # Add button to clear results
+        if st.button("🗑️ Clear Screenshots", help="Remove current screenshots to generate new ones"):
+            _clear_screenshot_results()
+            st.rerun()
+
+        st.markdown("---")
 
     # Step 1: Check session state
     st.markdown("**Session State Check**")
@@ -194,7 +211,7 @@ def _execute_improved_screenshots(slide_numbers: List[int]):
             with st.spinner("📸 Generating screenshots..."):
                 # Redirect print statements to capture debug info
                 with redirect_stdout(debug_output):
-                    # FIXED: Use the correct method name
+                    # Use the correct method name
                     results = processor.screenshot_slides_with_all_methods(
                         temp_pptx_path,
                         slide_numbers,
@@ -211,6 +228,27 @@ def _execute_improved_screenshots(slide_numbers: List[int]):
 
             progress_bar.progress(75)
             status_text.text("Processing results...")
+
+            # FIXED: Store screenshot results in session state
+            if results:
+                # Store results with image data in session state
+                screenshot_results = {}
+                for slide_num, file_path in results.items():
+                    if os.path.exists(file_path):
+                        # Read and store the image data
+                        with open(file_path, "rb") as f:
+                            image_data = f.read()
+
+                        screenshot_results[slide_num] = {
+                            'file_path': file_path,
+                            'image_data': image_data,
+                            'filename': os.path.basename(file_path),
+                            'file_size': os.path.getsize(file_path) / 1024
+                        }
+
+                # Store in session state
+                st.session_state.screenshot_results = screenshot_results
+                st.session_state.screenshot_slide_numbers = slide_numbers
 
             # Clear progress indicators
             progress_bar.progress(100)
@@ -229,12 +267,8 @@ def _execute_improved_screenshots(slide_numbers: List[int]):
                 else:
                     st.warning(f"⚠️ Generated {success_count} of {total_count} requested screenshots")
 
-                # Display each screenshot
-                for slide_num in slide_numbers:
-                    if slide_num in results:
-                        _display_screenshot_result(slide_num, results[slide_num])
-                    else:
-                        st.error(f"❌ **Slide {slide_num}**: Screenshot generation failed")
+                # Display each screenshot using stored results
+                _display_all_screenshot_results()
 
             else:
                 st.error("❌ No screenshots were generated")
@@ -259,46 +293,296 @@ def _execute_improved_screenshots(slide_numbers: List[int]):
             st.code(traceback.format_exc())
 
 
-def _display_screenshot_result(slide_num: int, file_path: str):
-    """Display a single screenshot result with thumbnail and download."""
-    if not os.path.exists(file_path):
-        st.error(f"❌ Slide {slide_num}: File not found")
+def _display_all_screenshot_results():
+    """Display all screenshot results from session state."""
+    if 'screenshot_results' not in st.session_state:
         return
+
+    screenshot_results = st.session_state.screenshot_results
+    slide_numbers = st.session_state.get('screenshot_slide_numbers', [])
+
+    # Display each screenshot
+    for slide_num in slide_numbers:
+        if slide_num in screenshot_results:
+            _display_screenshot_result_from_session(slide_num)
+        else:
+            st.error(f"❌ **Slide {slide_num}**: Screenshot generation failed")
+
+
+def _display_screenshot_result_from_session(slide_num: int):
+    """Display a single screenshot result from session state data."""
+    if 'screenshot_results' not in st.session_state or slide_num not in st.session_state.screenshot_results:
+        st.error(f"❌ Slide {slide_num}: Screenshot data not found")
+        return
+
+    result_data = st.session_state.screenshot_results[slide_num]
 
     st.markdown(f"### ✅ Slide {slide_num}")
 
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        # Display thumbnail
+        # Display thumbnail using stored image data
         try:
-            st.image(file_path, caption=f"Slide {slide_num}", width=250)
+            st.image(result_data['image_data'], caption=f"Slide {slide_num}", width=250)
         except Exception as e:
             st.error(f"Error displaying image: {str(e)}")
 
     with col2:
         # File information
-        file_size = os.path.getsize(file_path) / 1024
-        st.write(f"**📄 Filename:** {os.path.basename(file_path)}")
-        st.write(f"**📊 Size:** {file_size:.1f} KB")
+        st.write(f"**📄 Filename:** {result_data['filename']}")
+        st.write(f"**📊 Size:** {result_data['file_size']:.1f} KB")
 
-        # Download button
+        # Button row with download and analyze
         try:
-            with open(file_path, "rb") as f:
-                image_data = f.read()
+            col_download, col_analyze = st.columns(2)
 
-            st.download_button(
-                f"📥 Download Slide {slide_num}",
-                data=image_data,
-                file_name=os.path.basename(file_path),
-                mime="image/png",
-                key=f"download_slide_{slide_num}",
-                use_container_width=True
-            )
+            with col_download:
+                st.download_button(
+                    f"📥 Download",
+                    data=result_data['image_data'],
+                    file_name=result_data['filename'],
+                    mime="image/png",
+                    key=f"download_slide_{slide_num}",
+                    use_container_width=True
+                )
+
+            with col_analyze:
+                # Check if OpenAI key is available
+                has_openai_key = 'openai_api_key' in st.session_state and st.session_state.openai_api_key
+
+                if has_openai_key:
+                    # OpenAI analysis button
+                    if st.button(
+                            f"🤖 Analyze with AI",
+                            key=f"analyze_slide_{slide_num}",
+                            use_container_width=True,
+                            help="Use OpenAI to convert this diagram to Mermaid code"
+                    ):
+                        _analyze_screenshot_with_openai(slide_num, result_data['file_path'], result_data['image_data'])
+                else:
+                    st.button(
+                        f"🔑 Need OpenAI Key",
+                        disabled=True,
+                        use_container_width=True,
+                        help="Add OpenAI API key in sidebar to enable AI analysis"
+                    )
+
         except Exception as e:
-            st.error(f"Error creating download button: {str(e)}")
+            st.error(f"Error creating buttons: {str(e)}")
+
+    # FIXED: Show any AI analysis results for this slide
+    _display_ai_analysis_results(slide_num)
 
     st.markdown("---")
+
+
+def _display_ai_analysis_results(slide_num: int):
+    """Display AI analysis results if they exist for this slide."""
+    ai_results_key = f"ai_analysis_{slide_num}"
+
+    if ai_results_key in st.session_state:
+        analysis_data = st.session_state[ai_results_key]
+
+        st.markdown(f"### 🤖 AI Analysis for Slide {slide_num}")
+        st.success("✅ Analysis complete!")
+
+        # Display the generated Mermaid code
+        st.subheader("🎯 Generated Mermaid Diagram")
+        st.code(analysis_data['mermaid_code'], language="mermaid")
+
+        # Show rendered preview
+        try:
+            st.subheader("📊 Diagram Preview")
+            st.write("```mermaid")
+            st.write(analysis_data['mermaid_code'])
+            st.write("```")
+        except:
+            st.info("💡 Copy the code above and paste it into a Mermaid renderer to see the preview")
+
+        # Download button for the Mermaid code
+        st.download_button(
+            "📥 Download Mermaid Code",
+            data=analysis_data['mermaid_code'],
+            file_name=f"slide_{slide_num}_diagram.mmd",
+            mime="text/plain",
+            key=f"download_mermaid_{slide_num}_persistent",
+            help="Download the Mermaid diagram code"
+        )
+
+        # Option to add to markdown
+        if st.button(f"➕ Add to Markdown", key=f"add_to_md_{slide_num}_persistent"):
+            _add_mermaid_to_session_markdown(slide_num, analysis_data['mermaid_code'])
+
+
+def _analyze_screenshot_with_openai(slide_num: int, file_path: str, image_data: bytes):
+    """Analyze screenshot with OpenAI and store results in session state."""
+
+    # Get OpenAI API key from session state
+    openai_api_key = st.session_state.get('openai_api_key')
+
+    if not openai_api_key:
+        st.error("❌ OpenAI API key not found. Please add it in the sidebar.")
+        return
+
+    with st.spinner("🔍 Analyzing diagram with OpenAI..."):
+        try:
+            # Call OpenAI API
+            mermaid_code = _call_openai_vision_api(image_data, openai_api_key)
+
+            if mermaid_code:
+                # FIXED: Store analysis results in session state
+                ai_results_key = f"ai_analysis_{slide_num}"
+                st.session_state[ai_results_key] = {
+                    'mermaid_code': mermaid_code,
+                    'analyzed': True
+                }
+
+                # Force a rerun to show the results
+                st.rerun()
+            else:
+                st.error("❌ Failed to generate Mermaid diagram")
+
+        except Exception as e:
+            st.error(f"❌ Error during analysis: {str(e)}")
+
+
+def _call_openai_vision_api(image_data: bytes, api_key: str) -> Optional[str]:
+    """Call OpenAI Vision API to analyze the diagram and generate Mermaid code."""
+    try:
+        import openai
+
+        # Initialize OpenAI client
+        client = openai.OpenAI(api_key=api_key)
+
+        # Convert image to base64
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+        # Prepare the prompt
+        system_prompt = """You are an expert at analyzing diagrams and converting them to Mermaid diagram code."""
+
+        user_prompt = "Please analyze this diagram and convert it to Mermaid code following the guidelines."
+
+        # Make API call
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Using the best vision model
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": user_prompt
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}",
+                                "detail": "high"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=16384,
+            temperature=0.1  # Low temperature for consistent output
+        )
+
+        mermaid_code = response.choices[0].message.content.strip()
+
+        # # Clean up the response (remove any markdown formatting that might slip through)
+        # if mermaid_code.startswith("```"):
+        #     lines = mermaid_code.split('\n')
+        #     # Remove first and last lines if they're markdown code blocks
+        #     if lines[0].startswith("```"):
+        #         lines = lines[1:]
+        #     if lines and lines[-1].strip() == "```":
+        #         lines = lines[:-1]
+        #     mermaid_code = '\n'.join(lines)
+
+        return mermaid_code
+
+    except ImportError:
+        st.error("❌ OpenAI library not installed. Run: pip install openai")
+        return None
+    except Exception as e:
+        st.error(f"❌ OpenAI API error: {str(e)}")
+        return None
+
+
+def _add_mermaid_to_session_markdown(slide_num: int, mermaid_code: str):
+    """Add the generated Mermaid code to the session markdown content."""
+    if 'markdown_content' not in st.session_state:
+        st.warning("⚠️ No markdown content found in session")
+        return
+
+    # Find the slide in the markdown and add the Mermaid code
+    markdown_content = st.session_state.markdown_content
+
+    # Look for the slide marker
+    slide_marker = f"<!-- Slide {slide_num} -->"
+
+    if slide_marker in markdown_content:
+        # Find the next slide or end of content
+        lines = markdown_content.split('\n')
+        insert_position = None
+
+        for i, line in enumerate(lines):
+            if slide_marker in line:
+                # Find where to insert (before next slide or at end)
+                insert_position = i + 1
+                for j in range(i + 1, len(lines)):
+                    if lines[j].strip().startswith('<!-- Slide '):
+                        insert_position = j
+                        break
+                else:
+                    insert_position = len(lines)
+                break
+
+        if insert_position is not None:
+            # Insert the Mermaid code
+            mermaid_section = [
+                "",
+                f"### 🎯 AI-Generated Diagram for Slide {slide_num}",
+                "",
+                "```mermaid",
+                mermaid_code,
+                "```",
+                ""
+            ]
+
+            # Insert at the found position
+            lines[insert_position:insert_position] = mermaid_section
+
+            # Update session state
+            st.session_state.markdown_content = '\n'.join(lines)
+
+            st.success(f"✅ Added Mermaid diagram to Slide {slide_num} in markdown content!")
+        else:
+            st.error(f"❌ Could not find position to insert diagram for Slide {slide_num}")
+    else:
+        st.error(f"❌ Slide {slide_num} not found in markdown content")
+
+
+def _clear_screenshot_results():
+    """Clear all screenshot and AI analysis results."""
+    keys_to_clear = ['screenshot_results', 'screenshot_slide_numbers']
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+
+    # Clear all AI analysis results
+    keys_to_remove = []
+    for key in st.session_state.keys():
+        if key.startswith('ai_analysis_'):
+            keys_to_remove.append(key)
+
+    for key in keys_to_remove:
+        del st.session_state[key]
 
 
 def store_uploaded_file_data(uploaded_file):
@@ -336,3 +620,4 @@ def debug_screenshot_info():
         available, status = test_diagram_screenshot_capability()
         st.write(f"• Status: {status}")
         st.write(f"• Available: {'✅' if available else '❌'}")
+

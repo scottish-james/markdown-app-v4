@@ -37,17 +37,24 @@ def main():
     # App header and main features
     render_welcome_section()
 
-    # Set up the sidebar and get configuration
-    enhance_markdown, api_key = setup_enhanced_sidebar()
+    # Set up the sidebar and get configuration - UPDATED to handle OpenAI key
+    enhance_markdown, api_key_claude, api_key_openai = setup_enhanced_sidebar()
+
+    # Store OpenAI key in session state for use by other components
+    if api_key_openai:
+        st.session_state.openai_api_key = api_key_openai
+    elif 'openai_api_key' in st.session_state:
+        # Clear if no key provided
+        del st.session_state.openai_api_key
 
     # Main content area - Tabs
     tab1, tab2, tab3 = st.tabs(["🗂️ Upload File", "🗃️ Process Folder", "📘 About"])
 
     with tab1:
-        render_enhanced_file_upload(enhance_markdown, api_key)
+        render_enhanced_file_upload(enhance_markdown, api_key_claude)
 
     with tab2:
-        render_enhanced_folder_processing(enhance_markdown, api_key)
+        render_enhanced_folder_processing(enhance_markdown, api_key_claude)
 
     with tab3:
         render_about_tab()
