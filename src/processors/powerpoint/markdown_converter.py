@@ -1,6 +1,7 @@
 """
 Markdown Converter - Converts structured PowerPoint data to markdown format
 Handles text formatting, tables, images, charts, and slide title conversion
+Fixed: Bold detection for consistently formatted text
 """
 
 import re
@@ -121,6 +122,7 @@ class MarkdownConverter:
     def _build_formatted_text_from_runs(self, runs, clean_text):
         """
         Build formatted text from runs, handling text formatting.
+        Fixed: Apply consistent formatting once to whole text instead of per-run.
 
         Args:
             runs (list): List of formatted text runs
@@ -132,16 +134,37 @@ class MarkdownConverter:
         if not runs:
             return clean_text
 
-        # Check if we have any formatting
-        has_formatting = any(
-            run.get("bold") or run.get("italic") or run.get("hyperlink")
-            for run in runs
-        )
+        # Filter out empty runs for formatting analysis
+        text_runs = [run for run in runs if run.get("text")]
 
-        if not has_formatting:
+        if not text_runs:
             return clean_text
 
-        # Build formatted text preserving run boundaries
+        # Check if ALL runs have identical formatting
+        all_bold = all(run.get("bold", False) for run in text_runs)
+        all_italic = all(run.get("italic", False) for run in text_runs)
+        all_have_hyperlinks = all(run.get("hyperlink") for run in text_runs)
+
+        # If all runs have same formatting, apply once to whole text
+        if all_bold and all_italic and not all_have_hyperlinks:
+            return f"***{clean_text}***"
+        elif all_bold and not all_have_hyperlinks:
+            return f"**{clean_text}**"  # ← Fixed: "**Read this fifth**" instead of "**Read this ****fifth**"
+        elif all_italic and not all_have_hyperlinks:
+            return f"*{clean_text}*"
+        elif all_have_hyperlinks and len(set(run.get("hyperlink") for run in text_runs)) == 1:
+            # All runs have same hyperlink
+            hyperlink = text_runs[0]["hyperlink"]
+            if all_bold and all_italic:
+                return f"[***{clean_text}***]({hyperlink})"
+            elif all_bold:
+                return f"[**{clean_text}**]({hyperlink})"
+            elif all_italic:
+                return f"[*{clean_text}*]({hyperlink})"
+            else:
+                return f"[{clean_text}]({hyperlink})"
+
+        # Mixed formatting - use per-run logic
         formatted_parts = []
 
         for run in runs:
@@ -412,4 +435,3 @@ class MarkdownConverter:
         # Simple heuristic: look for sentence-ending punctuation followed by space and capital letter
         sentence_pattern = r'[.!?]\s+[A-Z]'
         return bool(re.search(sentence_pattern, text))
-

@@ -1,6 +1,6 @@
 """
-Simplified Accessibility Order Extractor with Group Reading Order Support
-XML-first approach with MarkItDown fallback + Z-axis group reading order
+Simplified Accessibility Order Extractor with XML-first approach
+XML-first approach with MarkItDown fallback when XML unavailable
 """
 
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -11,7 +11,7 @@ import re
 class AccessibilityOrderExtractor:
     """
     Simplified accessibility extractor: XML first, MarkItDown fallback.
-    Much cleaner approach than complex text analysis.
+    Assumes XML is available for sophisticated processing.
     """
 
     def __init__(self, use_accessibility_order=True):
@@ -34,6 +34,7 @@ class AccessibilityOrderExtractor:
     def get_slide_reading_order(self, slide, slide_number):
         """
         Get shapes from slide in proper reading order.
+        If XML not available, falls back to MarkItDown approach.
 
         Args:
             slide: python-pptx Slide object
@@ -42,27 +43,49 @@ class AccessibilityOrderExtractor:
         Returns:
             list: Ordered list of shapes in reading order
         """
-        if self.use_accessibility_order:
-            try:
-                # Try semantic accessibility order extraction
-                ordered_shapes = self._get_semantic_accessibility_order(slide)
-                self.last_extraction_method = "semantic_accessibility_order"
-                return ordered_shapes
-            except Exception as e:
-                print(f"Accessibility extraction failed for slide {slide_number}: {e}")
-                print("Falling back to MarkItDown extraction...")
-
-                # Fallback to MarkItDown - much simpler!
-                return self._get_markitdown_fallback_order(slide)
-        else:
-            # Use original positional method
+        if not self.use_accessibility_order:
+            # Use simple positional method
             ordered_shapes = self._get_positional_ordered_shapes(slide)
             self.last_extraction_method = "positional_order"
             return ordered_shapes
 
+        # Check if we have XML access
+        if not self._has_xml_access(slide):
+            # No XML - fall back to MarkItDown approach (simple shape order)
+            self.last_extraction_method = "markitdown_fallback"
+            return list(slide.shapes)
+
+        try:
+            # We have XML - use sophisticated accessibility order extraction
+            ordered_shapes = self._get_semantic_accessibility_order(slide)
+            self.last_extraction_method = "semantic_accessibility_order"
+            return ordered_shapes
+        except Exception as e:
+            print(f"XML accessibility extraction failed for slide {slide_number}: {e}")
+            print("Falling back to simple shape order...")
+            self.last_extraction_method = "xml_error_fallback"
+            return list(slide.shapes)
+
+    def _has_xml_access(self, slide):
+        """
+        Check if we have XML access for this slide.
+
+        Args:
+            slide: python-pptx Slide object
+
+        Returns:
+            bool: True if XML is accessible
+        """
+        try:
+            # Try to access slide XML
+            slide_xml = self._get_slide_xml(slide)
+            return slide_xml is not None and len(slide_xml) > 0
+        except Exception:
+            return False
+
     def _get_semantic_accessibility_order(self, slide):
         """
-        Get shapes in semantic accessibility order with proper group handling.
+        Get shapes in semantic accessibility order using XML data.
 
         Args:
             slide: python-pptx Slide object
@@ -92,7 +115,7 @@ class AccessibilityOrderExtractor:
         other_shapes = []
 
         for shape in final_ordered_shapes:
-            semantic_role = self._get_simple_semantic_role(shape)
+            semantic_role = self._get_semantic_role_from_xml(shape)
 
             if semantic_role == "title":
                 title_shapes.append(shape)
@@ -105,10 +128,9 @@ class AccessibilityOrderExtractor:
 
         return title_shapes + subtitle_shapes + content_shapes + other_shapes
 
-    def _get_simple_semantic_role(self, shape):
+    def _get_semantic_role_from_xml(self, shape):
         """
-        SIMPLIFIED: Only check PowerPoint placeholders and shape names.
-        No complex fallbacks - if we can't determine from XML, it's just "content".
+        Get semantic role from XML placeholder types (reliable source).
 
         Args:
             shape: python-pptx Shape object
@@ -116,7 +138,6 @@ class AccessibilityOrderExtractor:
         Returns:
             str: Semantic role ('title', 'subtitle', 'content', 'other')
         """
-
         # Check PowerPoint placeholder types (most reliable)
         try:
             if hasattr(shape, 'placeholder_format') and shape.placeholder_format:
@@ -139,7 +160,7 @@ class AccessibilityOrderExtractor:
         except Exception:
             pass
 
-        # Check shape names (secondary)
+        # Fallback: check shape names from XML
         try:
             if hasattr(shape, 'name') and shape.name:
                 name_lower = shape.name.lower()
@@ -153,37 +174,15 @@ class AccessibilityOrderExtractor:
         except Exception:
             pass
 
-        # Default classification - no complex analysis
+        # Default classification
         if hasattr(shape, 'text_frame') or hasattr(shape, 'text'):
             return "content"
         else:
             return "other"
 
-    def _get_markitdown_fallback_order(self, slide):
-        """
-        FALLBACK: Use MarkItDown to extract shapes when XML fails.
-        Much simpler and more reliable than complex text analysis.
-
-        Args:
-            slide: python-pptx Slide object
-
-        Returns:
-            list: Shapes in MarkItDown's default order
-        """
-        try:
-            # Just use the slide's natural shape order - MarkItDown handles this well
-            self.last_extraction_method = "markitdown_fallback"
-            return list(slide.shapes)
-
-        except Exception as e:
-            print(f"MarkItDown fallback failed: {e}")
-            # Ultimate fallback - positional order
-            self.last_extraction_method = "positional_fallback"
-            return self._get_positional_ordered_shapes(slide)
-
     def _get_xml_document_order(self, slide):
         """
-        Get shapes in XML document order (the core accessibility feature).
+        Get shapes in XML document order.
 
         Args:
             slide: python-pptx Slide object
@@ -207,7 +206,7 @@ class AccessibilityOrderExtractor:
 
     def _get_positional_ordered_shapes(self, slide):
         """
-        Original positional ordering method (ultimate fallback).
+        Simple positional ordering method (fallback).
 
         Args:
             slide: python-pptx Slide object
@@ -289,7 +288,7 @@ class AccessibilityOrderExtractor:
                 shape_info['id'] = cnv_pr.get('id')
                 shape_info['name'] = cnv_pr.get('name', '')
 
-        # Check for text content (simplified)
+        # Check for text content
         text_elements = shape_elem.findall('.//a:t', self.namespaces)
         if text_elements:
             all_text = ' '.join([t.text for t in text_elements if t.text])
@@ -299,50 +298,9 @@ class AccessibilityOrderExtractor:
 
         return shape_info
 
-    def _extract_shape_info_from_xml(self, shape_elem, order_index):
+    def _map_xml_to_pptx_shapes(self, xml_shape_info, pptx_shapes):
         """
-        Extract identifying information from a shape's XML element.
-
-        Args:
-            shape_elem: XML element for shape
-            order_index (int): Position in document order
-
-        Returns:
-            dict: Shape identification information
-        """
-        shape_info = {
-            'xml_order': order_index,
-            'id': None,
-            'name': None,
-            'type': shape_elem.tag.split('}')[-1] if '}' in shape_elem.tag else shape_elem.tag,
-            'has_text': False,
-            'text_content': None
-        }
-
-        # Extract ID and name from non-visual properties
-        nv_props = (shape_elem.find('.//p:nvSpPr', self.namespaces) or
-                    shape_elem.find('.//p:nvPicPr', self.namespaces) or
-                    shape_elem.find('.//p:nvGraphicFramePr', self.namespaces) or
-                    shape_elem.find('.//p:nvGrpSpPr', self.namespaces) or
-                    shape_elem.find('.//p:nvCxnSpPr', self.namespaces))
-
-        if nv_props is not None:
-            cnv_pr = nv_props.find('.//p:cNvPr', self.namespaces)
-            if cnv_pr is not None:
-                shape_info['id'] = cnv_pr.get('id')
-                shape_info['name'] = cnv_pr.get('name', '')
-
-        # Check for text content (simplified)
-        text_elements = shape_elem.findall('.//a:t', self.namespaces)
-        if text_elements:
-            all_text = ' '.join([t.text for t in text_elements if t.text])
-            if all_text.strip():
-                shape_info['has_text'] = True
-                shape_info['text_content'] = all_text.strip()[:50]
-
-        return shape_info
-        """
-        Map XML shape information to python-pptx shapes (simplified).
+        Map XML shape information to python-pptx shapes.
 
         Args:
             xml_shape_info (list): Shape info from XML parsing
@@ -391,16 +349,19 @@ class AccessibilityOrderExtractor:
 
     def _get_slide_xml(self, slide):
         """Extract raw XML from a slide."""
-        if hasattr(slide, '_element') and hasattr(slide._element, 'xml'):
-            return slide._element.xml
-        elif hasattr(slide, 'element') and hasattr(slide.element, 'xml'):
-            return slide.element.xml
-        else:
-            slide_part = slide.part if hasattr(slide, 'part') else None
-            if slide_part and hasattr(slide_part, '_element'):
-                return slide_part._element.xml
+        try:
+            if hasattr(slide, '_element') and hasattr(slide._element, 'xml'):
+                return slide._element.xml
+            elif hasattr(slide, 'element') and hasattr(slide.element, 'xml'):
+                return slide.element.xml
             else:
-                raise Exception("Cannot access slide XML")
+                slide_part = slide.part if hasattr(slide, 'part') else None
+                if slide_part and hasattr(slide_part, '_element'):
+                    return slide_part._element.xml
+                else:
+                    raise Exception("Cannot access slide XML")
+        except Exception:
+            return None
 
     def _get_shape_id(self, shape):
         """Extract shape ID from python-pptx shape."""
@@ -419,22 +380,6 @@ class AccessibilityOrderExtractor:
         try:
             if hasattr(shape, 'name') and shape.name:
                 return shape.name
-        except:
-            pass
-        return None
-
-    def _get_shape_text_preview(self, shape):
-        """Get preview of shape text for debugging."""
-        try:
-            if hasattr(shape, 'text_frame') and shape.text_frame:
-                text = ""
-                for para in shape.text_frame.paragraphs:
-                    if para.text.strip():
-                        text += para.text.strip() + " "
-                if text.strip():
-                    return text.strip()[:50]
-            elif hasattr(shape, 'text') and shape.text:
-                return shape.text.strip()[:50]
         except:
             pass
         return None
@@ -506,7 +451,6 @@ class AccessibilityOrderExtractor:
     def _get_group_z_axis_order(self, group_shape):
         """
         Get child shapes ordered by z-axis (front to back stacking order).
-        This often correlates with intended reading order within groups.
 
         Args:
             group_shape: python-pptx GroupShape object
@@ -523,7 +467,6 @@ class AccessibilityOrderExtractor:
                 children_with_z_order.append((z_order, child_shape))
 
             # Sort by z-order (lower values = back, higher values = front)
-            # For reading order, we typically want back-to-front
             children_with_z_order.sort(key=lambda x: x[0])
 
             # Return just the shapes (without z-order values)
@@ -535,31 +478,17 @@ class AccessibilityOrderExtractor:
             return list(group_shape.shapes)
 
     def _get_shape_z_order(self, shape):
-        """
-        Extract z-order (stacking position) from shape XML.
-
-        Args:
-            shape: python-pptx Shape object
-
-        Returns:
-            int: Z-order value (lower = back, higher = front)
-        """
+        """Extract z-order from shape XML."""
         try:
             if hasattr(shape, '_element') and hasattr(shape._element, 'xml'):
                 xml_str = shape._element.xml
 
                 # Look for z-order information in XML
-                # Method 1: Look for explicit z-order attributes
                 z_order_match = re.search(r'z-?order["\s]*[:=]["\s]*(\d+)', xml_str, re.IGNORECASE)
                 if z_order_match:
                     return int(z_order_match.group(1))
 
-                # Method 2: Look for drawing order attributes
-                draw_order_match = re.search(r'draw["\s]*order["\s]*[:=]["\s]*(\d+)', xml_str, re.IGNORECASE)
-                if draw_order_match:
-                    return int(draw_order_match.group(1))
-
-                # Method 3: Use shape ID as proxy (often correlates with creation/stacking order)
+                # Use shape ID as proxy
                 id_match = re.search(r'id["\s]*=["\s]*["\'](\d+)["\']', xml_str)
                 if id_match:
                     return int(id_match.group(1))
@@ -567,19 +496,10 @@ class AccessibilityOrderExtractor:
         except Exception:
             pass
 
-        # Default z-order if we can't determine it
         return 0
 
     def _extract_child_shape_info(self, shape_elem):
-        """
-        Extract information about a child shape from XML.
-
-        Args:
-            shape_elem: XML element for child shape
-
-        Returns:
-            dict: Child shape information
-        """
+        """Extract information about a child shape from XML."""
         child_info = {
             'id': None,
             'name': None,
@@ -599,28 +519,10 @@ class AccessibilityOrderExtractor:
                 child_info['id'] = cnv_pr.get('id')
                 child_info['name'] = cnv_pr.get('name', '')
 
-        # Try to extract z-order from XML
-        xml_str = ET.tostring(shape_elem, encoding='unicode')
-        try:
-            z_order_match = re.search(r'z-?order["\s]*[:=]["\s]*(\d+)', xml_str, re.IGNORECASE)
-            if z_order_match:
-                child_info['z_order'] = int(z_order_match.group(1))
-        except:
-            pass
-
         return child_info
 
     def _map_xml_children_to_pptx_children(self, xml_children, pptx_children):
-        """
-        Map XML child shape info to python-pptx child shapes.
-
-        Args:
-            xml_children (list): Child shape info from XML
-            pptx_children: python-pptx child shapes collection
-
-        Returns:
-            list: Ordered python-pptx child shapes
-        """
+        """Map XML child shape info to python-pptx child shapes."""
         ordered_children = []
         used_children = set()
 
@@ -658,41 +560,4 @@ class AccessibilityOrderExtractor:
                 ordered_children.append(child)
 
         return ordered_children
-        """
-        Simplified debug method.
-
-        Args:
-            slide: python-pptx Slide object
-            slide_number (int): Slide number for reference
-        """
-        print(f"\n=== DEBUGGING SLIDE {slide_number} READING ORDER ===")
-        print(f"Total shapes: {len(slide.shapes)}")
-
-        # Test different extraction methods
-        print(f"\n📊 EXTRACTION METHOD COMPARISON:")
-
-        try:
-            semantic_ordered = self._get_semantic_accessibility_order(slide)
-            print(f"✅ Semantic accessibility order: {len(semantic_ordered)} shapes")
-
-            print("\n🎯 SEMANTIC ORDER (titles first):")
-            for i, shape in enumerate(semantic_ordered[:5]):  # Show first 5
-                text_preview = self._get_shape_text_preview(shape) or "No text"
-                semantic_role = self._get_simple_semantic_role(shape)
-                shape_type = str(shape.shape_type).split('.')[-1]
-                print(f"  {i + 1}. [{semantic_role.upper()}] [{shape_type}] {text_preview[:40]}...")
-
-        except Exception as e:
-            print(f"❌ Semantic accessibility failed: {e}")
-
-            fallback_ordered = self._get_markitdown_fallback_order(slide)
-            print(f"✅ MarkItDown fallback: {len(fallback_ordered)} shapes")
-
-            print("\n🔄 MARKITDOWN FALLBACK ORDER:")
-            for i, shape in enumerate(fallback_ordered[:5]):  # Show first 5
-                text_preview = self._get_shape_text_preview(shape) or "No text"
-                shape_type = str(shape.shape_type).split('.')[-1]
-                print(f"  {i + 1}. [{shape_type}] {text_preview[:40]}...")
-
-        print(f"\n🏁 Final extraction method: {self.get_last_extraction_method()}")
 

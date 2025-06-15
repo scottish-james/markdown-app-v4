@@ -1,6 +1,7 @@
 """
-Text Processor - Handles advanced text formatting and bullet detection
-Specializes in extracting formatted text with proper bullet hierarchies
+Text Processor - Handles advanced text formatting with XML-driven detection
+Simplified to rely on XML data instead of text pattern matching
+Fixed: Bold detection for consistently formatted text
 """
 
 import re
@@ -8,7 +9,7 @@ import re
 
 class TextProcessor:
     """
-    Processes text content from PowerPoint shapes with advanced formatting detection.
+    Processes text content from PowerPoint shapes using XML data when available.
     Handles bullets, numbering, hyperlinks, and text formatting (bold, italic).
     """
 
@@ -68,7 +69,7 @@ class TextProcessor:
 
     def process_paragraph(self, para):
         """
-        Process a single paragraph with advanced bullet detection and formatting.
+        Process a single paragraph using XML data for formatting detection.
 
         Args:
             para: python-pptx Paragraph object
@@ -80,34 +81,24 @@ class TextProcessor:
         if not raw_text.strip():
             return None
 
-        # Check PowerPoint's bullet formatting
+        # Get formatting from XML (reliable source)
         ppt_level = getattr(para, 'level', None)
         is_ppt_bullet, xml_level = self._check_xml_bullet_formatting(para)
 
-        # Determine final bullet level
+        # Determine final bullet level from XML data
         bullet_level = self._determine_bullet_level(is_ppt_bullet, xml_level, ppt_level)
 
-        # Check for manual bullets and numbering
+        # Clean text based on XML formatting info
         clean_text = raw_text.strip()
-        manual_bullet = self._is_manual_bullet(clean_text)
-        numbered = self._is_numbered_list(clean_text)
-
-        # Process text based on formatting
-        if manual_bullet and bullet_level < 0:
-            # Estimate level from indentation
-            leading_spaces = len(raw_text) - len(raw_text.lstrip())
-            bullet_level = min(leading_spaces // 2, 6)
+        if bullet_level >= 0:
+            # XML says it's a bullet/number, clean it up
             clean_text = self._remove_bullet_char(clean_text)
-        elif bullet_level >= 0:
-            # Remove manual bullet chars if PowerPoint formatted it
-            clean_text = self._remove_bullet_char(clean_text)
-        elif numbered:
-            clean_text = self._remove_number_prefix(clean_text)
 
         # Extract formatted runs
-        formatted_runs = self._extract_runs_with_text_preservation(
-            para.runs, clean_text, bullet_level >= 0 or numbered
-        )
+        formatted_runs = self._extract_runs_with_formatting(para.runs, clean_text, bullet_level >= 0)
+
+        # Detect headings from font size rather than text patterns
+        likely_heading = self._is_likely_heading_from_font_size(para)
 
         para_data = {
             "raw_text": raw_text,
@@ -118,12 +109,10 @@ class TextProcessor:
                 "powerpoint_level": ppt_level,
                 "bullet_level": bullet_level,
                 "is_bullet": bullet_level >= 0,
-                "is_numbered": numbered,
-                "starts_with_bullet": manual_bullet,
-                "starts_with_number": numbered,
+                "is_numbered": self._is_numbered_from_xml(para),
                 "short_text": len(clean_text) < 100,
                 "all_caps": clean_text.isupper() if clean_text else False,
-                "likely_heading": self._is_likely_heading(clean_text)
+                "likely_heading": likely_heading
             }
         }
 
@@ -157,9 +146,58 @@ class TextProcessor:
 
         return is_ppt_bullet, xml_level
 
+    def _is_numbered_from_xml(self, para):
+        """
+        Check if paragraph is numbered based on XML data.
+
+        Args:
+            para: python-pptx Paragraph object
+
+        Returns:
+            bool: True if numbered list
+        """
+        try:
+            if hasattr(para, '_p') and para._p is not None:
+                xml_str = str(para._p.xml)
+                # Look for numbering indicators in XML
+                return 'buAutoNum' in xml_str
+        except:
+            return False
+
+    def _is_likely_heading_from_font_size(self, para):
+        """
+        Determine if text is likely a heading based on font size and length from XML.
+
+        Args:
+            para: python-pptx Paragraph object
+
+        Returns:
+            bool: True if text appears to be a heading
+        """
+        try:
+            text = para.text.strip()
+            if not text or len(text) > 150:  # Keep length check - very long text unlikely to be heading
+                return False
+
+            # Get font size from first run
+            if para.runs:
+                first_run = para.runs[0]
+                if hasattr(first_run, 'font') and hasattr(first_run.font, 'size') and first_run.font.size:
+                    font_size_pt = first_run.font.size.pt
+                    # Heading if font is 14pt or larger (typical heading threshold)
+                    return font_size_pt >= 14
+
+            # Fallback: if no font size available, use length only
+            return len(text) < 80
+
+        except Exception:
+            # If we can't get font info, use conservative length check
+            text = para.text.strip() if hasattr(para, 'text') else ""
+            return len(text) < 80 and len(text) > 0
+
     def _determine_bullet_level(self, is_ppt_bullet, xml_level, ppt_level):
         """
-        Determine the final bullet level from various sources.
+        Determine the final bullet level from XML sources.
 
         Args:
             is_ppt_bullet (bool): Whether XML indicates bullet
@@ -179,9 +217,9 @@ class TextProcessor:
 
         return bullet_level
 
-    def _extract_runs_with_text_preservation(self, runs, clean_text, has_prefix_removed):
+    def _extract_runs_with_formatting(self, runs, clean_text, has_prefix_removed):
         """
-        Extract formatted runs while preserving formatting after bullet/number removal.
+        Extract formatted runs while preserving formatting.
 
         Args:
             runs: List of python-pptx Run objects
@@ -284,39 +322,6 @@ class TextProcessor:
 
         return run_data
 
-    def _is_manual_bullet(self, text):
-        """
-        Check if text starts with a manual bullet character.
-
-        Args:
-            text (str): Text to check
-
-        Returns:
-            bool: True if text starts with bullet character
-        """
-        if not text:
-            return False
-        bullet_chars = '•◦▪▫‣·○■□→►✓✗-*+※◆◇'
-        return text[0] in bullet_chars
-
-    def _is_numbered_list(self, text):
-        """
-        Check if text starts with a number pattern.
-
-        Args:
-            text (str): Text to check
-
-        Returns:
-            bool: True if text starts with numbering
-        """
-        patterns = [
-            r'^\d+[\.\)]\s+',  # 1. or 1)
-            r'^[a-zA-Z][\.\)]\s+',  # a. or A)
-            r'^[ivxlcdm]+[\.\)]\s+',  # Roman numerals (lowercase)
-            r'^[IVXLCDM]+[\.\)]\s+',  # Roman numerals (uppercase)
-        ]
-        return any(re.match(pattern, text) for pattern in patterns)
-
     def _remove_bullet_char(self, text):
         """
         Remove bullet characters from start of text.
@@ -331,44 +336,9 @@ class TextProcessor:
             return text
         return re.sub(r'^[•◦▪▫‣·○■□→►✓✗\-\*\+※◆◇]\s*', '', text)
 
-    def _remove_number_prefix(self, text):
-        """
-        Remove number prefix from text.
-
-        Args:
-            text (str): Text with number prefix
-
-        Returns:
-            str: Text without number prefix
-        """
-        return re.sub(r'^[^\s]+\s+', '', text)
-
-    def _is_likely_heading(self, text):
-        """
-        Determine if text is likely a heading.
-
-        Args:
-            text (str): Text to analyze
-
-        Returns:
-            bool: True if text appears to be a heading
-        """
-        if not text or len(text) > 150:
-            return False
-
-        # All caps
-        if text.isupper() and len(text) > 2:
-            return True
-
-        # Short text without ending punctuation
-        if len(text) < 80 and not text.endswith(('.', '!', '?', ';', ':', ',')):
-            return True
-
-        return False
-
     def _analyze_plain_text_hints(self, text):
         """
-        Analyze plain text for formatting hints.
+        Analyze plain text for basic formatting hints (fallback for non-XML cases).
 
         Args:
             text (str): Text to analyze
@@ -381,21 +351,17 @@ class TextProcessor:
 
         stripped = text.strip()
 
-        # Check each line for bullets
-        lines = text.split('\n')
-        has_bullets = any(line.strip() and self._is_manual_bullet(line.strip()) for line in lines)
-
         return {
             "has_powerpoint_level": False,
             "powerpoint_level": None,
             "bullet_level": -1,
-            "is_bullet": has_bullets,
-            "is_numbered": any(self._is_numbered_list(line.strip()) for line in lines if line.strip()),
-            "starts_with_bullet": stripped and self._is_manual_bullet(stripped),
-            "starts_with_number": bool(re.match(r'^\s*\d+[\.\)]\s', text)),
+            "is_bullet": False,
+            "is_numbered": False,
+            "starts_with_bullet": False,
+            "starts_with_number": False,
             "short_text": len(stripped) < 100,
             "all_caps": stripped.isupper() if stripped else False,
-            "likely_heading": self._is_likely_heading(stripped)
+            "likely_heading": len(stripped) < 80 and len(stripped) > 0
         }
 
     def _extract_shape_hyperlink(self, shape):
@@ -439,3 +405,5 @@ class TextProcessor:
                 return f"https://{url}"
 
         return url
+
+
