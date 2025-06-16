@@ -41,7 +41,6 @@ The input will have slide markers like <!-- Slide 1 --> to separate slides. Keep
 Output clean, readable markdown that maintains the original document's intent but fixes structure and formatting issues.
 """
 
-
 class EnterpriseLLMClient:
     """Simple client for testing enterprise LLM connection"""
 
@@ -76,34 +75,17 @@ class EnterpriseLLMClient:
         if not token:
             raise ValueError("❌ JWT token file is empty")
 
-        if not token.count('.') == 2:
-            logger.warning(f"⚠️ JWT token format looks unusual: {token.count('.')} dots (expected 2)")
-
         return token
 
     def _load_model_url(self) -> str:
         """Load model URL with detailed logging"""
-        logger.info("🌐 Loading model URL...")
+        logger.info("Loading model URL...")
 
         if not os.path.exists("model_url.txt"):
             raise ValueError("❌ model_url.txt file not found")
 
         with open("model_url.txt", "r") as f:
-            content = f.read().strip()
-
-        if not content:
-            raise ValueError("❌ Model URL file is empty")
-
-        # Handle both single URL and JSON format
-        if content.startswith('{'):
-            logger.info("📋 JSON format detected")
-            urls = json.loads(content)
-            # Use content model or first available
-            url = urls.get("content", list(urls.values())[0])
-            logger.info(f"📋 Using URL from JSON: {url}")
-        else:
-            logger.info("📋 Single URL format detected")
-            url = content
+            url = f.read().strip()
 
         if not url.startswith(('http://', 'https://')):
             logger.warning(f"⚠️ URL doesn't start with http/https: {url}")
@@ -296,5 +278,5 @@ Tuple[str, Optional[str]]:
     except Exception as e:
         error_msg = f"Enterprise LLM failed: {str(e)}"
         logger.error(error_msg)
-        raise Exception(error_msg)  # Don't fall back - let it fail so we can debug
+        raise Exception(error_msg)
 

@@ -256,35 +256,21 @@ class AccessibilityOrderExtractor:
 
     def _get_semantic_accessibility_order(self, slide):
         """
-        Advanced semantic ordering using XML document structure and semantic roles.
-
-        ALGORITHM:
-        1. Extract shapes in XML document order (PowerPoint's internal order)
-        2. Keep groups intact (DON'T flatten them - let ContentExtractor handle recursion)
-        3. Classify shapes by semantic role (title, subtitle, content, other)
-        4. Reorder by semantic priority: titles → subtitles → content → other
-
-        XML DOCUMENT ORDER: PowerPoint stores shapes in creation/editing order
-        within the XML, which often reflects intended reading flow better than
-        visual positioning.
-
-        SEMANTIC CLASSIFICATION: Uses PowerPoint's placeholder types and shape
-        names to identify semantic roles, providing more meaningful ordering.
-
-        FIXED: Don't flatten groups here to avoid duplication with ContentExtractor.
-
-        Args:
-            slide: python-pptx Slide object
-
-        Returns:
-            list: Shapes ordered by semantic importance and document flow
+        RESTORED: Use the working architecture that flattens groups for true XML reading order.
         """
         # Step 1: Get all shapes in XML document order
         xml_ordered_shapes = self._get_xml_document_order(slide)
 
-        # Step 2: Keep all shapes as-is (FIXED: Don't flatten groups)
-        # Let ContentExtractor handle group recursion to avoid duplication
-        final_ordered_shapes = xml_ordered_shapes
+        # Step 2: Process groups by extracting children individually (RESTORED WORKING VERSION)
+        final_ordered_shapes = []
+        for shape in xml_ordered_shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                # Groups: Extract internal reading order and add children
+                group_children = self.get_reading_order_of_grouped_by_shape(shape)
+                final_ordered_shapes.extend(group_children)
+            else:
+                # Regular shapes: Add directly
+                final_ordered_shapes.append(shape)
 
         # Step 3: Separate by semantic importance for final ordering
         title_shapes = []
@@ -713,53 +699,24 @@ class AccessibilityOrderExtractor:
 
     def get_reading_order_of_grouped_by_shape(self, group_shape):
         """
-        Extract reading order of shapes within a group using XML or z-axis order.
-
-        GROUP PROCESSING STRATEGY:
-        1. Try XML-based group reading order (most accurate)
-        2. Fall back to z-axis (stacking order) if XML fails
-        3. Ultimate fallback to original shape order
-
-        WHY GROUPS NEED SPECIAL HANDLING:
-        Groups contain child shapes that may have their own internal ordering
-        that's different from the parent slide's order. This is common in
-        complex diagrams and grouped content.
-
-        Args:
-            group_shape: python-pptx GroupShape object
-
-        Returns:
-            list: Child shapes in proper reading order (deduplicated)
+        RESTORED: Remove deduplication that was breaking the order.
         """
         try:
             # Primary strategy: XML-based group reading order
             xml_ordered_children = self._get_group_xml_reading_order(group_shape)
             if xml_ordered_children:
-                return self._deduplicate_shapes(xml_ordered_children)  # FIXED: Deduplicate group children
+                return xml_ordered_children  # RESTORED: No deduplication
 
         except Exception as e:
             print(f"XML group reading order failed: {e}")
 
         # Fallback strategy: Use z-axis (stacking order)
-        fallback_children = self._get_group_z_axis_order(group_shape)
-        return self._deduplicate_shapes(fallback_children)  # FIXED: Deduplicate fallback children
+        return self._get_group_z_axis_order(group_shape)  # RESTORED: No deduplication
 
     def _get_group_xml_reading_order(self, group_shape):
         """
         Extract child shapes from group XML in document order.
-
-        GROUP XML STRUCTURE: Groups have their own internal XML structure
-        with child shape elements. This preserves the creation/editing order
-        of shapes within the group.
-
-        PARSING APPROACH: Similar to slide-level XML parsing but focused
-        on group-specific child elements.
-
-        Args:
-            group_shape: python-pptx GroupShape object
-
-        Returns:
-            list|None: Child shapes in XML document order or None if failed
+        FIXED: Only look at direct children, not all descendants to avoid duplicates.
         """
         try:
             # Get the group's XML element
@@ -771,21 +728,42 @@ class AccessibilityOrderExtractor:
             # Find child shapes in the group XML
             child_elements = []
 
-            # Look for child shape elements within the group
-            for elem in root.iter():
+            # FIXED: Only look at direct children, not all descendants
+            # Use root.find() or direct iteration instead of root.iter()
+
+            # Find the group shape element (grpSp)
+            group_elem = root
+            if root.tag.split('}')[-1] != 'grpSp':
+                # If root isn't the group, find it
+                group_elem = root.find('.//p:grpSp', self.namespaces)
+                if group_elem is None:
+                    print("❌ Could not find grpSp element in group XML")
+                    return None
+
+            print(f"🎯 Found group element, checking direct children...")
+
+            # FIXED: Only iterate through DIRECT children of the group
+            direct_children = list(group_elem)
+            print(f"   Group has {len(direct_children)} direct child elements")
+
+            for i, elem in enumerate(direct_children):
                 tag_name = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
-                if tag_name in ['sp', 'pic', 'graphicFrame', 'cxnSp']:
+                print(f"   Child {i + 1}: {tag_name}")
+
+                if tag_name in ['sp', 'pic', 'graphicFrame', 'cxnSp', 'grpSp']:
                     # Extract child shape info
                     child_info = self._extract_child_shape_info(elem)
                     if child_info:
                         child_elements.append(child_info)
+                        print(f"      → Added child shape: {child_info['type']} id={child_info['id']}")
 
             # Map XML children to python-pptx child shapes
             if child_elements:
+                print(f"🎯 Mapping {len(child_elements)} XML children to python-pptx shapes...")
                 return self._map_xml_children_to_pptx_children(child_elements, group_shape.shapes)
 
         except Exception as e:
-            print(f"Group XML parsing failed: {e}")
+            print(f"❌ Group XML parsing failed: {e}")
 
         return None
 
@@ -955,3 +933,6 @@ class AccessibilityOrderExtractor:
                 ordered_children.append(child)
 
         return ordered_children
+
+    # Add this debug version to accessibility_extractor.py
+
