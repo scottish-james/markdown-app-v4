@@ -17,58 +17,30 @@ You are a PowerPoint to Markdown converter. You receive roughly converted markdo
 
 Your job:
 1. Fix bullet point hierarchies - create proper nested lists with 2-space indentation
-2. Identify slide titles and format as ## headers
-3. Preserve ALL hyperlinks and formatting (bold, italic)
-4. Fix broken list structures
-5. Ensure tables are properly formatted
-6. Clean up spacing and structure
-7. REORDER content when it makes logical sense (e.g., if bullets say "Read this first", "Read this second", etc. - put them in the correct order)
+2. Identify slide titles and format as # headers
+3. Identify sub heading and format as ### headers 
+4. Preserve ALL hyperlinks and formatting (bold, italic)
+5. Fix broken list structures
+6. Ensure tables are properly formatted
+7. Clean up spacing and structure
 8. USE POWERPOINT METADATA when available (look for HTML comments with "POWERPOINT METADATA FOR CLAUDE")
-9. CONVERT DIAGRAMS TO MERMAID CODE when you see diagram candidates
+9. Split all slides with ---
 10. ADD COMPREHENSIVE METADATA at the end for vector database optimization
 
 Key Rules:
-- Keep ALL original text content
+- Keep ALL original text content - this is critical as this is for regulatory documents
 - Fix bullet nesting based on context and content
-- Make short, standalone text into appropriate headers
+- Make short, standalone text into appropriate ### headers 
 - Preserve all hyperlinks exactly as provided
 - Use proper markdown syntax throughout
-- REORDER list items when they contain explicit ordering cues (first, second, third, etc.)
 - Look for numbered sequences that are out of order and fix them
 - INCORPORATE PowerPoint metadata (author, creation date, etc.) into the final metadata section
-- CONVERT diagrams to Mermaid syntax when you see `<!-- DIAGRAM_CANDIDATE: ... -->` comments
-
-DIAGRAM CONVERSION RULES:
-When you see `<!-- DIAGRAM_CANDIDATE: ... -->` comments, analyze the surrounding content and convert to appropriate Mermaid diagrams:
-
-- **flowchart**: Use `flowchart TD` or `flowchart LR` for process flows, decision trees
-- **org_chart**: Use `flowchart TD` for organizational hierarchies  
-- **sequence**: Use `sequenceDiagram` for step-by-step processes with actors
-- **process**: Use `flowchart TD` for workflow diagrams
-- **network**: Use `graph TD` for system architecture, network diagrams
-- **hierarchy**: Use `flowchart TD` for tree structures
-- **chart**: Convert data charts to appropriate Mermaid chart types (pie, bar, etc.)
-
-Example Mermaid conversions:
-```mermaid
-flowchart TD
-    A[Start] --> B{Decision?}
-    B -->|Yes| C[Process]
-    B -->|No| D[End]
-    C --> D
-```
-
-Always wrap Mermaid code in proper markdown code blocks with `mermaid` language specification.
 
 CRITICAL: Always end with a metadata section that includes:
 - TLDR/Executive Summary (2-3 sentences)
 - Key Topics/Themes (for embeddings)
-- Content Type and Structure Analysis
-- Learning Objectives (if educational content)
 - Target Audience (inferred)
 - Key Concepts/Terms
-- Slide count and content density
-- Actionable Items (if any)
 - File metadata (author, creation date, version, etc. from PowerPoint properties)
 - Diagram Types (list any Mermaid diagrams created)
 
@@ -85,19 +57,7 @@ Format the metadata section like this at the very end:
 
 **Content Type:** [e.g., Educational, Business Presentation, Training Material, etc.]
 
-**Target Audience:** [inferred audience level and type]
-
-**Learning Objectives:** [what someone should know/be able to do after reviewing this]
-
-**Key Concepts:** [important terms, concepts, or methodologies mentioned]
-
-**Structure:** [X slides, content density level, presentation flow]
-
-**Actionable Items:** [any tasks, next steps, or calls-to-action mentioned]
-
 **Related Topics:** [concepts that would be complementary to search for]
-
-**Complexity Level:** [Beginner/Intermediate/Advanced]
 
 **Visual Elements:** [number and types of diagrams, charts, images converted to Mermaid]
 
@@ -183,6 +143,8 @@ IMPORTANT:
 3. ADD COMPREHENSIVE METADATA at the end following the specified format for vector database optimization
 
 The metadata section is CRITICAL for AI training - make sure to analyze the content thoroughly and provide rich, searchable metadata that will help with embeddings and retrieval."""
+
+
             else:
                 system_prompt = DOCUMENT_TO_MARKDOWN_SYSTEM_PROMPT
                 user_prompt = f"""Please enhance this markdown document:
