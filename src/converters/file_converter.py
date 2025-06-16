@@ -1,5 +1,5 @@
 """
-File converter module optimized for Claude Sonnet 4 enhancement.
+File converter module optimized for Enterprise LLM enhancement.
 Specifically designed for PowerPoint presentations with advanced processing.
 """
 
@@ -11,13 +11,29 @@ from typing import Tuple, Optional
 from src.utils.file_utils import get_file_extension
 from src.converters.hyperlink_extractor import extract_pdf_hyperlinks, format_hyperlinks_section
 
-# Import the Claude enhancer
+# Import the Enterprise LLM enhancer (priority)
+try:
+    from enterprise_file_converter import (
+        convert_file_to_markdown_enterprise,
+        convert_pptx_enhanced_enterprise,
+        get_enterprise_llm_status
+    )
+
+    ENTERPRISE_LLM_AVAILABLE = True
+    print("✅ Enterprise LLM system available")
+except ImportError:
+    ENTERPRISE_LLM_AVAILABLE = False
+    print("📄 Enterprise LLM not available, falling back to Claude/MarkItDown")
+
+# Import the Claude enhancer (fallback)
 try:
     from .claude_markdown_convertor import ClaudeMarkdownEnhancer
+
     CLAUDE_AVAILABLE = True
 except ImportError:
     CLAUDE_AVAILABLE = False
-    print("Claude enhancer not available. Install anthropic package and ensure claude_markdown_convertor.py is present.")
+    print(
+        "Claude enhancer not available. Install anthropic package and ensure claude_markdown_convertor.py is present.")
 
 
 def enhance_markdown_with_claude(markdown_content: str, api_key: str,
@@ -47,19 +63,30 @@ def enhance_markdown_with_claude(markdown_content: str, api_key: str,
 
 def convert_file_to_markdown(file_data, filename, enhance=True, api_key=None):
     """
-    Convert a file to Markdown using MarkItDown and enhance with Claude Sonnet 4.
+    Convert a file to Markdown using Enterprise LLM (preferred) or Claude/MarkItDown (fallback).
     Optimized for PowerPoint presentations.
 
     Args:
         file_data (bytes): The binary content of the file
         filename (str): The name of the file
-        enhance (bool): Whether to enhance the markdown with Claude
-        api_key (str): Anthropic API key for Claude enhancement
+        enhance (bool): Whether to enhance the markdown with LLM
+        api_key (str): Anthropic API key for Claude enhancement (ignored if Enterprise LLM available)
 
     Returns:
         tuple: (markdown_content, error_message)
     """
     try:
+        # Priority 1: Enterprise LLM (if available and configured)
+        if ENTERPRISE_LLM_AVAILABLE and enhance:
+            status = get_enterprise_llm_status()
+            if status['configured']:
+                print(f"🚀 Using Enterprise LLM for {filename}")
+                return convert_file_to_markdown_enterprise(file_data, filename, enhance=True)
+            else:
+                print(f"⚠️ Enterprise LLM not configured: {status['message']}")
+                print(f"📄 Falling back to Claude/MarkItDown for {filename}")
+
+        # Priority 2: Existing Claude/MarkItDown processing
         ext = get_file_extension(filename)
 
         # Use enhanced processing for PowerPoint files (primary optimization)
@@ -196,7 +223,7 @@ def convert_standard_markitdown(file_data, filename, enhance=True, api_key=None)
 
 
 def convert_stream_to_markdown(file_stream, filename, enhance=True, api_key=None):
-    """Convert a file stream directly to Markdown with Claude enhancement."""
+    """Convert a file stream directly to Markdown with LLM enhancement."""
     try:
         current_pos = file_stream.tell()
         file_stream.seek(0)
@@ -207,3 +234,81 @@ def convert_stream_to_markdown(file_stream, filename, enhance=True, api_key=None
 
     except Exception as e:
         return "", str(e)
+
+
+def get_converter_status():
+    """
+    Get status of available conversion methods.
+
+    Returns:
+        dict: Status of Enterprise LLM, Claude, and MarkItDown availability
+    """
+    status = {
+        "enterprise_llm": {
+            "available": ENTERPRISE_LLM_AVAILABLE,
+            "configured": False,
+            "message": ""
+        },
+        "claude": {
+            "available": CLAUDE_AVAILABLE
+        },
+        "markitdown": {
+            "available": True  # Always available as base dependency
+        },
+        "preferred_method": "markitdown"  # Default fallback
+    }
+
+    # Check Enterprise LLM configuration
+    if ENTERPRISE_LLM_AVAILABLE:
+        try:
+            enterprise_status = get_enterprise_llm_status()
+            status["enterprise_llm"]["configured"] = enterprise_status["configured"]
+            status["enterprise_llm"]["message"] = enterprise_status["message"]
+
+            if enterprise_status["configured"]:
+                status["preferred_method"] = "enterprise_llm"
+        except Exception as e:
+            status["enterprise_llm"]["message"] = f"Status check failed: {str(e)}"
+
+    # Set preferred method based on availability
+    if status["enterprise_llm"]["configured"]:
+        status["preferred_method"] = "enterprise_llm"
+    elif status["claude"]["available"]:
+        status["preferred_method"] = "claude"
+    else:
+        status["preferred_method"] = "markitdown"
+
+    return status
+
+
+def print_converter_status():
+    """Print a user-friendly status of available conversion methods."""
+    status = get_converter_status()
+
+    print("\n🔄 File Converter Status:")
+    print("=" * 40)
+
+    # Enterprise LLM Status
+    if status["enterprise_llm"]["available"]:
+        if status["enterprise_llm"]["configured"]:
+            print("✅ Enterprise LLM: Configured and ready")
+        else:
+            print(f"⚠️ Enterprise LLM: Available but not configured")
+            print(f"   Message: {status['enterprise_llm']['message']}")
+    else:
+        print("❌ Enterprise LLM: Not available")
+
+    # Claude Status
+    if status["claude"]["available"]:
+        print("✅ Claude: Available")
+    else:
+        print("❌ Claude: Not available")
+
+    # MarkItDown Status (always available)
+    print("✅ MarkItDown: Available (baseline)")
+
+    print(f"\n🎯 Preferred Method: {status['preferred_method'].replace('_', ' ').title()}")
+    print("=" * 40)
+
+
+
