@@ -294,8 +294,6 @@ class EnterpriseLLMEnhancer:
         """
         Split markdown content into batches of 5 slides based on HTML markers
         """
-        import re
-
         # Split by slide markers
         slide_pattern = r'<!-- Slide (\d+) -->'
         slides = re.split(slide_pattern, markdown_content)
@@ -305,57 +303,41 @@ class EnterpriseLLMEnhancer:
         current_slide = ""
 
         for i, part in enumerate(slides):
-            if re.match(r'^\d+
+            if re.match(r'^\d+$', part):  # This is a slide number
+                if current_slide:
+                    clean_slides.append(current_slide.strip())
+                current_slide = f"<!-- Slide {part} -->"
+            elif part.strip() and not part.startswith("<!-- POWERPOINT METADATA"):
+                current_slide += "\n" + part
 
+        # Add final slide
+        if current_slide:
+            clean_slides.append(current_slide.strip())
 
-def enhance_markdown_with_enterprise_llm(structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
-Tuple[str, Optional[str]]:
-    """
-    Simple test function
-    """
-    try:
-        enhancer = EnterpriseLLMEnhancer()
-        return enhancer.enhance_powerpoint_content(structured_data, metadata, source_filename)
-    except Exception as e:
-        error_msg = f"Enterprise LLM failed: {str(e)}"
-        logger.error(error_msg)
-        raise Exception(error_msg)  # Don't fall back - let it fail so we can debug
+        # Group into batches of 5
+        batches = []
+        for i in range(0, len(clean_slides), 5):
+            batch = clean_slides[i:i + 5]
+            batches.append("\n\n".join(batch))
 
-, part):  # This is a slide number
-if current_slide:
-    clean_slides.append(current_slide.strip())
-current_slide = f"<!-- Slide {part} -->"
-elif part.strip() and not part.startswith("<!-- POWERPOINT METADATA"):
-current_slide += "\n" + part
+        logger.info(f"📊 Found {len(clean_slides)} slides, grouped into {len(batches)} batches")
+        return batches
 
-# Add final slide
-if current_slide:
-    clean_slides.append(current_slide.strip())
+    def _process_metadata(self, metadata: Dict, source_filename: str) -> str:
+        """
+        Process metadata separately
+        """
+        if not metadata:
+            return ""
 
-# Group into batches of 5
-batches = []
-for i in range(0, len(clean_slides), 5):
-    batch = clean_slides[i:i + 5]
-batches.append("\n\n".join(batch))
+        metadata_parts = [f"# Document Analysis: {source_filename}", ""]
 
-return batches
+        for key, value in metadata.items():
+            if value:
+                clean_key = key.replace('_', ' ').title()
+                metadata_parts.append(f"**{clean_key}:** {value}")
 
-
-def _process_metadata(self, metadata: Dict, source_filename: str) -> str:
-    """
-    Process metadata separately
-    """
-    if not metadata:
-        return ""
-
-    metadata_parts = [f"# Document Analysis: {source_filename}", ""]
-
-    for key, value in metadata.items():
-        if value:
-            clean_key = key.replace('_', ' ').title()
-            metadata_parts.append(f"**{clean_key}:** {value}")
-
-    return "\n".join(metadata_parts)
+        return "\n".join(metadata_parts)
 
 
 def enhance_markdown_with_enterprise_llm(structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
