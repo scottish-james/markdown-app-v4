@@ -48,6 +48,8 @@ from .markdown_converter import MarkdownConverter
 from .metadata_extractor import MetadataExtractor
 
 
+
+
 class PowerPointProcessor:
     """
     Main PowerPoint processor implementing dual-strategy processing architecture.
@@ -111,6 +113,104 @@ class PowerPointProcessor:
 
         # Supported file format configuration
         self.supported_formats = ['.pptx', '.ppt']
+
+    def debug_duplication_source(self, file_path, slide_number=1):
+        """
+        Debug method to track where duplication is happening.
+        Add this method to PowerPointProcessor class temporarily.
+        """
+        try:
+            prs = Presentation(file_path)
+            if slide_number > len(prs.slides):
+                print(f"Slide {slide_number} not found. Presentation has {len(prs.slides)} slides.")
+                return
+
+            slide = prs.slides[slide_number - 1]
+
+            print(f"\n=== DEBUGGING DUPLICATION ON SLIDE {slide_number} ===")
+            print(f"Raw slide.shapes count: {len(slide.shapes)}")
+
+            # Step 1: Check what AccessibilityOrderExtractor returns
+            ordered_shapes = self.accessibility_extractor.get_slide_reading_order(slide, slide_number)
+            print(f"AccessibilityOrderExtractor returned: {len(ordered_shapes)} shapes")
+
+            # Check for duplicates in ordered_shapes
+            shape_ids = []
+            for i, shape in enumerate(ordered_shapes):
+                shape_id = id(shape)
+                if shape_id in shape_ids:
+                    print(f"🚨 DUPLICATE FOUND: Shape {i} (id={shape_id}) already seen!")
+                shape_ids.append(shape_id)
+
+                shape_type = str(shape.shape_type).split('.')[-1]
+                text_preview = ""
+                try:
+                    if hasattr(shape, 'text') and shape.text:
+                        text_preview = shape.text.strip()[:30] + "..."
+                    elif hasattr(shape, 'text_frame') and shape.text_frame:
+                        text_preview = shape.text_frame.text.strip()[:30] + "..."
+                except:
+                    text_preview = "No text"
+                print(f"  Shape {i}: [{shape_type}] {text_preview}")
+
+            print(f"\n=== CONTENT EXTRACTION RESULTS ===")
+
+            # Step 2: Check what ContentExtractor produces
+            content_blocks = []
+            for i, shape in enumerate(ordered_shapes):
+                print(f"\nProcessing shape {i} ({str(shape.shape_type).split('.')[-1]})...")
+                block = self.content_extractor.extract_shape_content(shape, self.text_processor)
+                if block:
+                    content_blocks.append(block)
+                    print(f"  ✅ Produced content block of type: {block['type']}")
+
+                    # If it's a group, show what's inside
+                    if block['type'] == 'group':
+                        extracted = block.get('extracted_blocks', [])
+                        print(f"  📦 Group contains {len(extracted)} extracted blocks:")
+                        for j, sub_block in enumerate(extracted):
+                            print(f"    {j}: {sub_block['type']}")
+
+                    # If it's text, show a preview
+                    elif block['type'] == 'text':
+                        paras = block.get('paragraphs', [])
+                        print(f"  📝 Text block with {len(paras)} paragraphs")
+                        for j, para in enumerate(paras[:2]):  # Show first 2 paragraphs
+                            print(f"    {j}: {para.get('clean_text', '')[:40]}...")
+                else:
+                    print(f"  ❌ No content block produced")
+
+            print(f"\nTotal content blocks produced: {len(content_blocks)}")
+
+            # Step 3: Check markdown conversion
+            print(f"\n=== MARKDOWN CONVERSION ===")
+            slide_data = {
+                "slide_number": slide_number,
+                "content_blocks": content_blocks
+            }
+
+            test_data = {"slides": [slide_data]}
+            markdown = self.markdown_converter.convert_structured_data_to_markdown(test_data, False)
+
+            # Count how many times certain text appears
+            lines = markdown.split('\n')
+            text_counts = {}
+            for line in lines:
+                if line.strip() and not line.startswith('<!--'):
+                    clean_line = line.strip()
+                    if clean_line in text_counts:
+                        text_counts[clean_line] += 1
+                        print(f"🚨 DUPLICATE TEXT: '{clean_line}' appears {text_counts[clean_line]} times")
+                    else:
+                        text_counts[clean_line] = 1
+
+            print(f"\n=== FINAL MARKDOWN ===")
+            print(markdown)
+
+        except Exception as e:
+            print(f"Debug failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def convert_pptx_to_markdown_enhanced(self, file_path, convert_slide_titles=True):
         """

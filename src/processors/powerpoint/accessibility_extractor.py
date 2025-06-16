@@ -1,6 +1,7 @@
 """
 Simplified Accessibility Order Extractor with XML-first approach
 XML-first approach with MarkItDown fallback when XML unavailable
+FIXED: Content-based deduplication resolves duplicate shape issue
 
 ARCHITECTURE OVERVIEW:
 This component determines the proper reading order of shapes on PowerPoint slides.
@@ -89,6 +90,7 @@ class AccessibilityOrderExtractor:
         2. Verify XML availability for sophisticated processing
         3. Execute appropriate strategy with fallback handling
         4. Track method used for debugging and monitoring
+        5. FIXED: Content-based deduplication to prevent duplicate shapes
 
         ERROR HANDLING:
         - XML parsing failures fall back to simpler methods
@@ -100,30 +102,133 @@ class AccessibilityOrderExtractor:
             slide_number (int): Slide number for debugging/logging
 
         Returns:
-            list: Ordered list of shapes in reading order
+            list: Ordered list of shapes in reading order (deduplicated)
         """
         if not self.use_accessibility_order:
             # Simple positional method - fastest but least sophisticated
             ordered_shapes = self._get_positional_ordered_shapes(slide)
             self.last_extraction_method = "positional_order"
-            return ordered_shapes
-
-        # Check XML availability before attempting sophisticated processing
-        if not self._has_xml_access(slide):
+        elif not self._has_xml_access(slide):
             # No XML - fall back to MarkItDown approach (simple shape order)
             self.last_extraction_method = "markitdown_fallback"
-            return list(slide.shapes)
+            ordered_shapes = list(slide.shapes)
+        else:
+            try:
+                # XML available - use sophisticated accessibility order extraction
+                ordered_shapes = self._get_semantic_accessibility_order(slide)
+                self.last_extraction_method = "semantic_accessibility_order"
+            except Exception as e:
+                print(f"XML accessibility extraction failed for slide {slide_number}: {e}")
+                print("Falling back to simple shape order...")
+                self.last_extraction_method = "xml_error_fallback"
+                ordered_shapes = list(slide.shapes)
 
+        # CRITICAL FIX: Content-based deduplication to catch all duplicate sources
+        return self._deduplicate_shapes(ordered_shapes)
+
+    def _deduplicate_shapes(self, shapes):
+        """
+        Remove duplicate shapes while preserving order.
+        FIXED: Use content-based deduplication instead of object ID.
+
+        DEDUPLICATION STRATEGY:
+        The issue was that XML mapping creates different Python objects
+        for the same PowerPoint shapes, so object ID deduplication fails.
+        Instead, we deduplicate based on shape content fingerprints.
+
+        CONTENT FINGERPRINT:
+        Creates unique identifier based on shape type, text content,
+        position, and size to identify duplicate shapes regardless
+        of Python object identity.
+
+        Args:
+            shapes (list): List of shapes that may contain duplicates
+
+        Returns:
+            list: Deduplicated list of shapes in original order
+        """
+        seen_content = set()
+        deduplicated = []
+
+        for shape in shapes:
+            # Create a content-based fingerprint for the shape
+            content_fingerprint = self._get_shape_content_fingerprint(shape)
+
+            if content_fingerprint not in seen_content:
+                deduplicated.append(shape)
+                seen_content.add(content_fingerprint)
+
+        return deduplicated
+
+    def _get_shape_content_fingerprint(self, shape):
+        """
+        Create a unique fingerprint for a shape based on its content.
+        This allows us to identify duplicate shapes even if they're different Python objects.
+
+        FINGERPRINT COMPONENTS:
+        1. Shape type (PLACEHOLDER, TEXT_BOX, etc.)
+        2. Text content (most reliable identifier)
+        3. Position (top, left coordinates)
+        4. Size (width, height)
+
+        RELIABILITY:
+        Text content is the primary identifier since it's most likely
+        to be unique and consistent across duplicate objects.
+        Position and size provide additional discrimination.
+
+        Args:
+            shape: python-pptx Shape object
+
+        Returns:
+            str: Unique fingerprint string for the shape
+        """
+        fingerprint_parts = []
+
+        # Part 1: Shape type
         try:
-            # XML available - use sophisticated accessibility order extraction
-            ordered_shapes = self._get_semantic_accessibility_order(slide)
-            self.last_extraction_method = "semantic_accessibility_order"
-            return ordered_shapes
-        except Exception as e:
-            print(f"XML accessibility extraction failed for slide {slide_number}: {e}")
-            print("Falling back to simple shape order...")
-            self.last_extraction_method = "xml_error_fallback"
-            return list(slide.shapes)
+            shape_type = str(shape.shape_type)
+            fingerprint_parts.append(f"type:{shape_type}")
+        except:
+            fingerprint_parts.append("type:unknown")
+
+        # Part 2: Text content (most reliable for identifying duplicates)
+        try:
+            if hasattr(shape, 'text') and shape.text:
+                text_content = shape.text.strip()
+                fingerprint_parts.append(f"text:{text_content}")
+            elif hasattr(shape, 'text_frame') and shape.text_frame:
+                text_content = shape.text_frame.text.strip()
+                fingerprint_parts.append(f"text:{text_content}")
+            else:
+                fingerprint_parts.append("text:none")
+        except:
+            fingerprint_parts.append("text:error")
+
+        # Part 3: Position (as secondary identifier)
+        try:
+            if hasattr(shape, 'top') and hasattr(shape, 'left'):
+                # Round position to nearest 1000 EMU to handle minor positioning differences
+                top = round(shape.top / 1000) * 1000
+                left = round(shape.left / 1000) * 1000
+                fingerprint_parts.append(f"pos:{top},{left}")
+            else:
+                fingerprint_parts.append("pos:unknown")
+        except:
+            fingerprint_parts.append("pos:error")
+
+        # Part 4: Size (as additional identifier)
+        try:
+            if hasattr(shape, 'width') and hasattr(shape, 'height'):
+                # Round size to nearest 1000 EMU
+                width = round(shape.width / 1000) * 1000
+                height = round(shape.height / 1000) * 1000
+                fingerprint_parts.append(f"size:{width}x{height}")
+            else:
+                fingerprint_parts.append("size:unknown")
+        except:
+            fingerprint_parts.append("size:error")
+
+        return "|".join(fingerprint_parts)
 
     def _has_xml_access(self, slide):
         """
@@ -155,7 +260,7 @@ class AccessibilityOrderExtractor:
 
         ALGORITHM:
         1. Extract shapes in XML document order (PowerPoint's internal order)
-        2. Process grouped shapes by extracting individual children
+        2. Keep groups intact (DON'T flatten them - let ContentExtractor handle recursion)
         3. Classify shapes by semantic role (title, subtitle, content, other)
         4. Reorder by semantic priority: titles → subtitles → content → other
 
@@ -166,6 +271,8 @@ class AccessibilityOrderExtractor:
         SEMANTIC CLASSIFICATION: Uses PowerPoint's placeholder types and shape
         names to identify semantic roles, providing more meaningful ordering.
 
+        FIXED: Don't flatten groups here to avoid duplication with ContentExtractor.
+
         Args:
             slide: python-pptx Slide object
 
@@ -175,16 +282,9 @@ class AccessibilityOrderExtractor:
         # Step 1: Get all shapes in XML document order
         xml_ordered_shapes = self._get_xml_document_order(slide)
 
-        # Step 2: Process groups by extracting children individually
-        final_ordered_shapes = []
-        for shape in xml_ordered_shapes:
-            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-                # Groups: Extract internal reading order and add children
-                group_children = self.get_reading_order_of_grouped_by_shape(shape)
-                final_ordered_shapes.extend(group_children)
-            else:
-                # Regular shapes: Add directly
-                final_ordered_shapes.append(shape)
+        # Step 2: Keep all shapes as-is (FIXED: Don't flatten groups)
+        # Let ContentExtractor handle group recursion to avoid duplication
+        final_ordered_shapes = xml_ordered_shapes
 
         # Step 3: Separate by semantic importance for final ordering
         title_shapes = []
@@ -455,64 +555,61 @@ class AccessibilityOrderExtractor:
     def _map_xml_to_pptx_shapes(self, xml_shape_info, pptx_shapes):
         """
         Map XML shape information back to python-pptx shape objects.
+        FIXED: Enhanced deduplication and simplified logic to prevent duplicates.
 
         MAPPING STRATEGY:
         1. Create lookup tables by ID and name
         2. Match XML shapes to python-pptx shapes using IDs (most reliable)
         3. Fall back to name matching for shapes without IDs
         4. Add any unmatched shapes at the end
-
-        CHALLENGES:
-        - XML and python-pptx may represent shapes differently
-        - IDs are most reliable but not always present
-        - Names can be duplicate or missing
-        - Some shapes may exist in XML but not python-pptx (or vice versa)
-
-        LOOKUP OPTIMIZATION: Uses dictionary lookup for O(1) matching instead
-        of nested loops for better performance with large slide sets.
+        5. CRITICAL: Use object ID tracking to prevent duplicates
 
         Args:
             xml_shape_info (list): Shape info from XML parsing
             pptx_shapes: python-pptx shapes collection
 
         Returns:
-            list: Ordered python-pptx shapes matching XML order
+            list: Ordered python-pptx shapes matching XML order (no duplicates)
         """
         ordered_shapes = []
-        used_shapes = set()
+        used_shape_ids = set()  # Track object IDs to prevent duplicates
 
         # Create efficient lookup tables for matching
-        shape_lookup = {}
+        shape_lookup_by_id = {}
+        shape_lookup_by_name = {}
+
         for shape in pptx_shapes:
             shape_id = self._get_shape_id(shape)
             shape_name = self._get_shape_name(shape)
 
-            # Use prefixed keys to avoid ID/name collisions
             if shape_id:
-                shape_lookup[f"id_{shape_id}"] = shape
+                shape_lookup_by_id[shape_id] = shape
             if shape_name:
-                shape_lookup[f"name_{shape_name}"] = shape
+                shape_lookup_by_name[shape_name] = shape
 
         # Match XML order to python-pptx shapes
         for xml_info in xml_shape_info:
             matched_shape = None
 
             # Priority 1: Try ID matching (most reliable)
-            if xml_info['id']:
-                matched_shape = shape_lookup.get(f"id_{xml_info['id']}")
+            if xml_info['id'] and xml_info['id'] in shape_lookup_by_id:
+                matched_shape = shape_lookup_by_id[xml_info['id']]
 
             # Priority 2: Try name matching (less reliable)
-            if not matched_shape and xml_info['name']:
-                matched_shape = shape_lookup.get(f"name_{xml_info['name']}")
+            if not matched_shape and xml_info['name'] and xml_info['name'] in shape_lookup_by_name:
+                matched_shape = shape_lookup_by_name[xml_info['name']]
 
             # Add if found and not already used
-            if matched_shape and matched_shape not in used_shapes:
-                ordered_shapes.append(matched_shape)
-                used_shapes.add(matched_shape)
+            if matched_shape:
+                obj_id = id(matched_shape)
+                if obj_id not in used_shape_ids:
+                    ordered_shapes.append(matched_shape)
+                    used_shape_ids.add(obj_id)
 
         # Add any remaining unmatched shapes at the end
         for shape in pptx_shapes:
-            if shape not in used_shapes:
+            obj_id = id(shape)
+            if obj_id not in used_shape_ids:
                 ordered_shapes.append(shape)
 
         return ordered_shapes
@@ -632,19 +729,20 @@ class AccessibilityOrderExtractor:
             group_shape: python-pptx GroupShape object
 
         Returns:
-            list: Child shapes in proper reading order
+            list: Child shapes in proper reading order (deduplicated)
         """
         try:
             # Primary strategy: XML-based group reading order
             xml_ordered_children = self._get_group_xml_reading_order(group_shape)
             if xml_ordered_children:
-                return xml_ordered_children
+                return self._deduplicate_shapes(xml_ordered_children)  # FIXED: Deduplicate group children
 
         except Exception as e:
             print(f"XML group reading order failed: {e}")
 
         # Fallback strategy: Use z-axis (stacking order)
-        return self._get_group_z_axis_order(group_shape)
+        fallback_children = self._get_group_z_axis_order(group_shape)
+        return self._deduplicate_shapes(fallback_children)  # FIXED: Deduplicate fallback children
 
     def _get_group_xml_reading_order(self, group_shape):
         """
@@ -803,6 +901,7 @@ class AccessibilityOrderExtractor:
     def _map_xml_children_to_pptx_children(self, xml_children, pptx_children):
         """
         Map XML child shape info to python-pptx child shapes.
+        FIXED: Enhanced deduplication for group children.
 
         CHILD MAPPING: Same strategy as parent slide mapping but applied
         to group children. Uses ID and name matching with fallbacks.
@@ -812,42 +911,47 @@ class AccessibilityOrderExtractor:
             pptx_children: python-pptx group child shapes
 
         Returns:
-            list: Ordered child shapes matching XML order
+            list: Ordered child shapes matching XML order (no duplicates)
         """
         ordered_children = []
-        used_children = set()
+        used_child_ids = set()  # Track object IDs to prevent duplicates
 
         # Create lookup for python-pptx child shapes
-        child_lookup = {}
+        child_lookup_by_id = {}
+        child_lookup_by_name = {}
+
         for child in pptx_children:
             child_id = self._get_shape_id(child)
             child_name = self._get_shape_name(child)
 
             if child_id:
-                child_lookup[f"id_{child_id}"] = child
+                child_lookup_by_id[child_id] = child
             if child_name:
-                child_lookup[f"name_{child_name}"] = child
+                child_lookup_by_name[child_name] = child
 
         # Match XML order to python-pptx children
         for xml_child in xml_children:
             matched_child = None
 
             # Try ID matching first
-            if xml_child['id']:
-                matched_child = child_lookup.get(f"id_{xml_child['id']}")
+            if xml_child['id'] and xml_child['id'] in child_lookup_by_id:
+                matched_child = child_lookup_by_id[xml_child['id']]
 
             # Try name matching as fallback
-            if not matched_child and xml_child['name']:
-                matched_child = child_lookup.get(f"name_{xml_child['name']}")
+            if not matched_child and xml_child['name'] and xml_child['name'] in child_lookup_by_name:
+                matched_child = child_lookup_by_name[xml_child['name']]
 
             # Add if found and not already used
-            if matched_child and matched_child not in used_children:
-                ordered_children.append(matched_child)
-                used_children.add(matched_child)
+            if matched_child:
+                obj_id = id(matched_child)
+                if obj_id not in used_child_ids:
+                    ordered_children.append(matched_child)
+                    used_child_ids.add(obj_id)
 
         # Add any remaining children that weren't matched
         for child in pptx_children:
-            if child not in used_children:
+            obj_id = id(child)
+            if obj_id not in used_child_ids:
                 ordered_children.append(child)
 
         return ordered_children
