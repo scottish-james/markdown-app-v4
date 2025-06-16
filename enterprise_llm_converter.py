@@ -1,79 +1,108 @@
 """
-Enterprise LLM Converter for PowerPoint Processing
-Replaces Claude integration with enterprise SageMaker LLM endpoints
+Simplified Enterprise LLM Converter for PowerPoint Processing
+Uses proven Claude prompts with enterprise SageMaker endpoints
 """
 
 import os
 import json
 import requests
 import logging
-from typing import Tuple, Optional, List, Dict
+from typing import Tuple, Optional, Dict
 import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Enhanced system prompts for different content types
-METADATA_PROCESSING_PROMPT = """
-You are a document metadata analyser. You receive PowerPoint metadata and must create a comprehensive summary for document management and search optimisation.
-
-Your job:
-1. Analyse the metadata comprehensively
-2. Create executive summary and key insights
-3. Identify document purpose and audience
-4. Suggest categorisation and tags
-5. Highlight any data quality issues
-6. Format everything in clear, professional UK English
-
-Output clean, actionable metadata analysis that helps with document discovery and management.
-"""
-
-CONTENT_PROCESSING_PROMPT = """
-You are a PowerPoint content processor. You receive slide content and must clean it up into professional, well-structured markdown for business use.
+# Proven prompts from working Claude system
+PPTX_PROCESSING_PROMPT = """
+You are a PowerPoint to Markdown converter. You receive roughly converted markdown from PowerPoint slides and must clean it up into professional, well-structured markdown for AI training and vector database storage.
 
 Your job:
 1. Fix bullet point hierarchies - create proper nested lists with 2-space indentation
-2. Ensure titles are properly formatted as headers
-3. Preserve ALL content and hyperlinks
-4. Fix broken list structures and improve readability
-5. Clean up spacing and structure
-6. Maintain professional UK English throughout
+2. Identify slide titles and format as # headers
+3. Identify sub heading and format as ### headers 
+4. Preserve ALL hyperlinks and formatting (bold, italic)
+5. Fix broken list structures
+6. Ensure tables are properly formatted
+7. Clean up spacing and structure
+8. USE POWERPOINT METADATA when available (look for HTML comments with "POWERPOINT METADATA FOR CLAUDE")
+9. Split all slides with ---
+10. ADD COMPREHENSIVE METADATA at the end for vector database optimization
 
 Key Rules:
-- Keep ALL original content - this is critical for business documents
-- Use proper markdown syntax throughout
+- Keep ALL original text content - this is critical as this is for regulatory documents
+- Fix bullet nesting based on context and content
+- Make short, standalone text into appropriate ### headers 
 - Preserve all hyperlinks exactly as provided
-- Ensure consistent formatting and structure
+- Use proper markdown syntax throughout
+- Look for numbered sequences that are out of order and fix them
+- INCORPORATE PowerPoint metadata (author, creation date, etc.) into the final metadata section
 
-Output clean, readable markdown that maintains the original document's intent whilst improving structure and readability.
+CRITICAL: Always end with a metadata section that includes:
+- TLDR/Executive Summary (2-3 sentences)
+- Key Topics/Themes (for embeddings)
+- Target Audience (inferred)
+- Key Concepts/Terms
+- File metadata (author, creation date, version, etc. from PowerPoint properties)
+- Diagram Types (list any Mermaid diagrams created)
+
+The input will have slide markers like `<!-- Slide 1 -->` and may include PowerPoint metadata in HTML comments and diagram candidates.
+
+Format the metadata section like this at the very end:
+
+---
+## DOCUMENT METADATA (for AI/Vector DB)
+
+**TLDR:** [2-3 sentence summary of the entire presentation]
+
+**Key Topics:** [comma-separated list of main topics/themes]
+
+**Content Type:** [e.g., Educational, Business Presentation, Training Material, etc.]
+
+**Related Topics:** [concepts that would be complementary to search for]
+
+**Visual Elements:** [number and types of diagrams, charts, images converted to Mermaid]
+
+**File Properties:**
+- **Author:** [from PowerPoint metadata]
+- **Created Date:** [from PowerPoint metadata]
+- **Last Modified:** [from PowerPoint metadata]
+- **Version:** [from PowerPoint metadata]
+- **Company/Organization:** [from PowerPoint metadata]
+- **Document Title:** [from PowerPoint metadata]
+- **Keywords:** [from PowerPoint metadata]
+- **Category:** [from PowerPoint metadata]
+- **Slide Dimensions:** [from PowerPoint metadata]
+---
+
+Output clean, readable markdown that maintains the original document's intent but fixes obvious ordering issues, converts diagrams to Mermaid, and adds rich metadata for AI training.
 """
 
-DIAGRAM_PROCESSING_PROMPT = """
-You are a diagram and visual content specialist. You receive slide content that contains potential diagrams and charts.
+DOCUMENT_PROCESSING_PROMPT = """
+You are a markdown formatting expert. Your task is to:
+1. Fix any syntax errors in the markdown
+2. Improve the structure and hierarchy of headers
+3. Ensure consistent formatting throughout
+4. Enhance bullet points and numbered lists
+5. Properly format tables and code blocks
+6. Add appropriate spacing between sections
+7. Maintain the original content without adding new information
+8. Preserve all links and references
 
-Your job:
-1. Identify visual elements that could be enhanced
-2. Create Mermaid diagram representations where appropriate
-3. Improve descriptions of charts and visual elements
-4. Suggest how visual content could be better represented in markdown
-5. Maintain all original content whilst enhancing visual descriptions
-
-Output enhanced markdown with improved visual content representation.
+Return ONLY the enhanced markdown content without any explanations or additional text.
 """
 
 
 class EnterpriseLLMClient:
     """
-    Client for enterprise LLM hosted on SageMaker with multiple model routing
+    Simplified client for enterprise LLM hosted on SageMaker
     """
 
     def __init__(self):
-        """
-        Initialise the enterprise LLM client
-        """
+        """Initialize the enterprise LLM client"""
         self.jwt_token = self._load_jwt_token()
-        self.model_urls = self._load_model_urls()
+        self.model_url = self._load_model_url()
         self.headers = {
             "Authorization": f"Bearer {self.jwt_token}",
             "Content-Type": "application/json"
@@ -92,60 +121,43 @@ class EnterpriseLLMClient:
         except Exception as e:
             raise ValueError(f"Error reading JWT token: {str(e)}")
 
-    def _load_model_urls(self) -> Dict[str, str]:
-        """Load model URLs from file - supporting multiple endpoints"""
+    def _load_model_url(self) -> str:
+        """Load model URL from file - simplified to use single endpoint"""
         try:
             with open("model_url.txt", "r") as f:
                 content = f.read().strip()
 
-            # Support both single URL and JSON format for multiple models
+            if not content:
+                raise ValueError("Model URL file is empty")
+
+            # Support both single URL and JSON format
             if content.startswith('{'):
-                # JSON format: {"metadata": "url1", "content": "url2", "diagram": "url3"}
                 urls = json.loads(content)
+                # Use content model URL or first available
+                return urls.get("content", list(urls.values())[0])
             else:
-                # Single URL format - use for all model types
-                urls = {
-                    "metadata": content,
-                    "content": content,
-                    "diagram": content
-                }
-
-            # Validate required URLs
-            required_types = ["metadata", "content", "diagram"]
-            for model_type in required_types:
-                if model_type not in urls:
-                    logger.warning(f"No URL specified for {model_type} model, using default")
-                    urls[model_type] = list(urls.values())[0]  # Use first available URL
-
-            return urls
+                return content
 
         except FileNotFoundError:
             raise ValueError("model_url.txt file not found")
         except json.JSONDecodeError:
             raise ValueError("Invalid JSON format in model_url.txt")
         except Exception as e:
-            raise ValueError(f"Error reading model URLs: {str(e)}")
+            raise ValueError(f"Error reading model URL: {str(e)}")
 
-    def call_model(self, prompt: str, content: str, model_type: str = "content", max_tokens: int = 4096) -> Tuple[
-        str, Optional[str]]:
+    def call_model(self, prompt: str, content: str, max_tokens: int = 4096) -> Tuple[str, Optional[str]]:
         """
         Call the enterprise LLM with retry logic
 
         Args:
             prompt (str): System prompt
             content (str): User content
-            model_type (str): Type of model to use ('metadata', 'content', 'diagram')
             max_tokens (int): Maximum tokens for response
 
         Returns:
             Tuple[str, Optional[str]]: Response content and error message
         """
-        if model_type not in self.model_urls:
-            return content, f"Unknown model type: {model_type}"
-
-        url = self.model_urls[model_type]
-
-        # Prepare request payload (adjust based on your SageMaker endpoint format)
+        # Prepare request payload
         payload = {
             "messages": [
                 {"role": "system", "content": prompt},
@@ -159,10 +171,10 @@ class EnterpriseLLMClient:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                logger.info(f"Calling {model_type} model (attempt {attempt + 1}/{max_retries})")
+                logger.info(f"Calling enterprise model (attempt {attempt + 1}/{max_retries})")
 
                 response = requests.post(
-                    url,
+                    self.model_url,
                     headers=self.headers,
                     json=payload,
                     timeout=120  # 2 minute timeout
@@ -179,10 +191,9 @@ class EnterpriseLLMClient:
                     elif "content" in result:
                         enhanced_content = result["content"]
                     else:
-                        # Fallback - return the whole response as string
                         enhanced_content = str(result)
 
-                    logger.info(f"Successfully processed content with {model_type} model")
+                    logger.info("Successfully processed content with enterprise model")
                     return enhanced_content, None
 
                 elif response.status_code == 429:  # Rate limited
@@ -214,19 +225,17 @@ class EnterpriseLLMClient:
 
 class EnterpriseLLMEnhancer:
     """
-    Enhanced PowerPoint processor using enterprise LLM with intelligent routing
+    Simplified PowerPoint processor using enterprise LLM
     """
 
     def __init__(self):
-        """
-        Initialise the enterprise LLM enhancer
-        """
+        """Initialize the enterprise LLM enhancer"""
         self.client = EnterpriseLLMClient()
 
     def enhance_powerpoint_content(self, structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
     Tuple[str, Optional[str]]:
         """
-        Main processing method that routes different content types to appropriate models
+        Simple, direct processing method using proven prompts
 
         Args:
             structured_data (dict): Structured presentation data
@@ -238,164 +247,106 @@ class EnterpriseLLMEnhancer:
         """
         logger.info(f"Starting enterprise LLM processing for {source_filename}")
 
-        all_content_parts = []
-        errors = []
+        try:
+            # Convert structured data to basic markdown
+            basic_markdown = self._convert_structured_to_basic_markdown(structured_data, metadata, source_filename)
 
-        # 1. Process metadata first with metadata model
-        logger.info("Processing metadata...")
-        metadata_content = self._prepare_metadata_content(metadata, source_filename)
-        enhanced_metadata, metadata_error = self.client.call_model(
-            METADATA_PROCESSING_PROMPT,
-            metadata_content,
-            model_type="metadata"
-        )
+            # Determine content type for prompt selection
+            if "pptx" in source_filename.lower() or "ppt" in source_filename.lower():
+                prompt = PPTX_PROCESSING_PROMPT
+                user_content = f"""
+                Please clean up this PowerPoint markdown conversion for AI training and vector database storage:
 
-        if metadata_error:
-            errors.append(f"Metadata processing error: {metadata_error}")
+                **Source:** {source_filename}
 
-        all_content_parts.append("# Document Analysis\n\n" + enhanced_metadata)
+                **Content to clean up:**
+                {basic_markdown}
 
-        # 2. Process slides in batches of 5 with content model
-        logger.info("Processing slide content in batches...")
-        slides = structured_data.get("slides", [])
+IMPORTANT: 
+1. Fix the structure, bullet hierarchies, and formatting while preserving all content and hyperlinks
+2. If you see content with ordering words like "first", "second", "third", "fourth", "fifth" etc., REORDER those items into the correct sequence
+3. ADD COMPREHENSIVE METADATA at the end following the specified format for vector database optimization
 
-        # Separate regular slides from diagram slides
-        regular_slides = []
-        diagram_slides = []
+The metadata section is CRITICAL for AI training - make sure to analyze the content thoroughly and provide rich, searchable metadata that will help with embeddings and retrieval."""
 
-        for slide in slides:
-            if self._contains_diagrams(slide):
-                diagram_slides.append(slide)
             else:
-                regular_slides.append(slide)
+                prompt = DOCUMENT_PROCESSING_PROMPT
+                user_content = f"""Please enhance this markdown document:
 
-        # Process regular slides in batches of 5
-        enhanced_slides = []
-        for i in range(0, len(regular_slides), 5):
-            batch = regular_slides[i:i + 5]
-            batch_content = self._prepare_slide_batch_content(batch, i + 1)
+**Source Information:**
+- Filename: {source_filename}
 
-            enhanced_batch, batch_error = self.client.call_model(
-                CONTENT_PROCESSING_PROMPT,
-                batch_content,
-                model_type="content"
-            )
+**Original Markdown Content:**
+{basic_markdown}
 
-            if batch_error:
-                errors.append(f"Batch {i // 5 + 1} processing error: {batch_error}")
-                enhanced_slides.append(batch_content)  # Use original on error
-            else:
-                enhanced_slides.append(enhanced_batch)
+Please apply the formatting standards and ensure all content is preserved while improving the structure, consistency, and readability."""
 
-        # 3. Process diagram slides with diagram model
-        logger.info("Processing diagram content...")
-        for slide in diagram_slides:
-            slide_content = self._prepare_single_slide_content(slide)
+            # Process with enterprise LLM
+            enhanced_content, error = self.client.call_model(prompt, user_content)
 
-            enhanced_slide, slide_error = self.client.call_model(
-                DIAGRAM_PROCESSING_PROMPT,
-                slide_content,
-                model_type="diagram"
-            )
+            if error:
+                logger.error(f"Enterprise LLM processing error: {error}")
+                return basic_markdown, error
 
-            if slide_error:
-                errors.append(f"Diagram slide {slide['slide_number']} error: {slide_error}")
-                enhanced_slides.append(slide_content)  # Use original on error
-            else:
-                enhanced_slides.append(enhanced_slide)
+            logger.info(f"Enterprise LLM processing completed for {source_filename}")
+            return enhanced_content, None
 
-        # 4. Combine all content parts
-        all_content_parts.extend(enhanced_slides)
+        except Exception as e:
+            error_msg = f"Enterprise LLM enhancement failed: {str(e)}"
+            logger.error(error_msg)
+            return self._convert_structured_to_basic_markdown(structured_data, metadata, source_filename), error_msg
 
-        # 5. Create final combined content
-        final_content = "\n\n---\n\n".join(all_content_parts)
+    def _convert_structured_to_basic_markdown(self, structured_data: Dict, metadata: Dict, source_filename: str) -> str:
+        """
+        Convert structured data to basic markdown for processing
+        """
+        markdown_parts = []
 
-        # Add processing summary
-        final_content += f"\n\n---\n\n## Processing Summary\n\n"
-        final_content += f"- **Total slides processed:** {len(slides)}\n"
-        final_content += f"- **Regular content batches:** {(len(regular_slides) + 4) // 5}\n"
-        final_content += f"- **Diagram slides:** {len(diagram_slides)}\n"
-        final_content += f"- **Models used:** Metadata, Content, Diagram\n"
+        # Add metadata as HTML comment for the LLM
+        if metadata:
+            markdown_parts.append("<!-- POWERPOINT METADATA FOR CLAUDE:")
+            for key, value in metadata.items():
+                if value:
+                    markdown_parts.append(f"{key}: {value}")
+            markdown_parts.append("-->")
 
-        if errors:
-            final_content += f"- **Processing errors:** {len(errors)}\n"
-            for error in errors:
-                final_content += f"  - {error}\n"
+        # Process slides
+        for slide in structured_data.get("slides", []):
+            markdown_parts.append(f"\n<!-- Slide {slide['slide_number']} -->\n")
 
-        error_message = "; ".join(errors) if errors else None
+            # Process content blocks
+            for block in slide.get("content_blocks", []):
+                if block.get("type") == "text":
+                    for para in block.get("paragraphs", []):
+                        text = para.get("clean_text", "").strip()
+                        if text:
+                            hints = para.get("hints", {})
+                            if hints.get("is_bullet"):
+                                level = hints.get("bullet_level", 0)
+                                indent = "  " * level
+                                markdown_parts.append(f"{indent}- {text}")
+                            else:
+                                markdown_parts.append(text)
 
-        logger.info(f"Enterprise LLM processing completed for {source_filename}")
-        return final_content, error_message
+                elif block.get("type") == "table":
+                    # Basic table conversion
+                    table_data = block.get("data", [])
+                    if table_data:
+                        for i, row in enumerate(table_data):
+                            markdown_parts.append("| " + " | ".join(row) + " |")
+                            if i == 0:  # Header separator
+                                markdown_parts.append("| " + " | ".join("---" for _ in row) + " |")
 
-    def _prepare_metadata_content(self, metadata: Dict, filename: str) -> str:
-        """Prepare metadata for processing"""
-        content = f"**File:** {filename}\n\n"
-        content += "**PowerPoint Metadata:**\n\n"
+                elif block.get("type") == "image":
+                    alt_text = block.get("alt_text", "Image")
+                    markdown_parts.append(f"![{alt_text}](image)")
 
-        for key, value in metadata.items():
-            if value:
-                content += f"- **{key.replace('_', ' ').title()}:** {value}\n"
+                elif block.get("type") == "chart":
+                    title = block.get("title", "Chart")
+                    markdown_parts.append(f"**Chart: {title}**")
+                    markdown_parts.append("<!-- DIAGRAM_CANDIDATE: chart -->")
 
-        content += "\n\nPlease analyse this metadata and provide insights for document management."
-        return content
-
-    def _prepare_slide_batch_content(self, slides: List[Dict], batch_number: int) -> str:
-        """Prepare a batch of slides for processing"""
-        content = f"**Slide Batch {batch_number}** (Slides {slides[0]['slide_number']}-{slides[-1]['slide_number']})\n\n"
-
-        for slide in slides:
-            content += f"### Slide {slide['slide_number']}\n\n"
-            content += self._extract_slide_text_content(slide)
-            content += "\n\n"
-
-        content += "Please clean up and enhance this slide content whilst preserving all information."
-        return content
-
-    def _prepare_single_slide_content(self, slide: Dict) -> str:
-        """Prepare a single slide for diagram processing"""
-        content = f"**Slide {slide['slide_number']} (Contains Diagrams/Charts)**\n\n"
-        content += self._extract_slide_text_content(slide)
-        content += "\n\nPlease enhance this visual content and suggest diagram representations."
-        return content
-
-    def _extract_slide_text_content(self, slide: Dict) -> str:
-        """Extract text content from a slide"""
-        content_parts = []
-
-        for block in slide.get("content_blocks", []):
-            if block.get("type") == "text":
-                for para in block.get("paragraphs", []):
-                    clean_text = para.get("clean_text", "")
-                    if clean_text:
-                        hints = para.get("hints", {})
-                        if hints.get("is_bullet"):
-                            level = hints.get("bullet_level", 0)
-                            indent = "  " * level
-                            content_parts.append(f"{indent}- {clean_text}")
-                        else:
-                            content_parts.append(clean_text)
-
-            elif block.get("type") == "table":
-                content_parts.append("[TABLE CONTENT]")
-                # Add basic table representation
-
-            elif block.get("type") == "chart":
-                content_parts.append(f"[CHART: {block.get('title', 'Untitled')}]")
-
-            elif block.get("type") == "image":
-                content_parts.append(f"[IMAGE: {block.get('alt_text', 'Image')}]")
-
-        return "\n".join(content_parts)
-
-    def _contains_diagrams(self, slide: Dict) -> bool:
-        """Check if a slide contains diagrams or charts"""
-        for block in slide.get("content_blocks", []):
-            if block.get("type") in ["chart", "diagram"]:
-                return True
-            # Check for high concentration of shapes/lines (diagram indicators)
-            if block.get("type") == "shape" or "arrow" in str(block) or "line" in str(block):
-                return True
-        return False
+        return "\n\n".join(filter(None, markdown_parts))
 
 
 def enhance_markdown_with_enterprise_llm(structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
@@ -418,15 +369,18 @@ Tuple[str, Optional[str]]:
         error_msg = f"Enterprise LLM enhancement failed: {str(e)}"
         logger.error(error_msg)
 
-        # Return basic formatted content as fallback
+        # Return basic markdown as fallback
         fallback_content = f"# {source_filename}\n\n"
         fallback_content += "**Error:** Enterprise LLM processing failed, showing original content.\n\n"
 
-        # Add basic slide content
         for slide in structured_data.get("slides", []):
             fallback_content += f"## Slide {slide['slide_number']}\n\n"
-            fallback_content += enhancer._extract_slide_text_content(slide) if 'enhancer' in locals() else str(slide)
-            fallback_content += "\n\n"
+            for block in slide.get("content_blocks", []):
+                if block.get("type") == "text":
+                    for para in block.get("paragraphs", []):
+                        text = para.get("clean_text", "").strip()
+                        if text:
+                            fallback_content += f"{text}\n\n"
 
         return fallback_content, error_msg
 
