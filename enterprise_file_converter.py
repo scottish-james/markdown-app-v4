@@ -1,6 +1,6 @@
 """
-Enterprise File Converter - Modified to use Enterprise LLM instead of Claude
-Integrates with existing PowerPoint processing pipeline
+Enterprise File Converter - FIXED to properly use PowerPoint processor output
+Now ensures the sophisticated PowerPoint processor output flows correctly to enterprise LLM
 """
 
 import io
@@ -22,14 +22,13 @@ except ImportError:
     print("Enterprise LLM not available. Please ensure JWT_token.txt and model_url.txt are present.")
 
 
-def enhance_content_with_enterprise_llm(structured_data, metadata, source_filename: str, content_type: str) -> Tuple[
-    str, Optional[str]]:
+def enhance_content_with_enterprise_llm(structured_data, metadata, source_filename: str, content_type: str) -> Tuple[str, Optional[str]]:
     """
-    Enhance content using enterprise LLM with intelligent routing
+    FIXED: Enhance content using enterprise LLM with PowerPoint processor integration
 
     Args:
-        structured_data: Structured PowerPoint data
-        metadata: Document metadata
+        structured_data: Structured PowerPoint data from PowerPointProcessor
+        metadata: Document metadata from PowerPointProcessor
         source_filename (str): Source filename
         content_type (str): Content type
 
@@ -41,6 +40,7 @@ def enhance_content_with_enterprise_llm(structured_data, metadata, source_filena
 
     try:
         enhancer = EnterpriseLLMEnhancer()
+        # FIXED: This now uses the PowerPoint processor's markdown converter internally
         return enhancer.enhance_powerpoint_content(structured_data, metadata, source_filename)
     except Exception as e:
         return str(structured_data), str(e)
@@ -75,8 +75,8 @@ def convert_file_to_markdown_enterprise(file_data, filename, enhance=True):
 
 def convert_pptx_enhanced_enterprise(file_data, filename, enhance=True):
     """
-    Convert PowerPoint files using enhanced processing with enterprise LLM
-    This uses the sophisticated XML-based processing pipeline
+    FIXED: Convert PowerPoint files using enhanced processing with enterprise LLM
+    Now properly uses the PowerPoint processor's output with semantic roles
     """
     try:
         # Create temporary file for processing
@@ -101,9 +101,11 @@ def convert_pptx_enhanced_enterprise(file_data, filename, enhance=True):
                     pptx_metadata = processor.metadata_extractor.extract_pptx_metadata(prs, tmp_file_path)
 
                     # Process entire presentation through component pipeline
+                    # This extracts structured data with semantic roles
                     structured_data = processor.extract_presentation_data(prs)
 
-                    # Enhance with enterprise LLM using intelligent routing
+                    # FIXED: Enhance with enterprise LLM using sophisticated PowerPoint processor output
+                    # The enterprise LLM converter now uses the PowerPoint processor's markdown converter
                     enhanced_content, enhance_error = enhance_content_with_enterprise_llm(
                         structured_data,
                         pptx_metadata,
@@ -113,11 +115,15 @@ def convert_pptx_enhanced_enterprise(file_data, filename, enhance=True):
 
                     if enhance_error:
                         print(f"Enterprise LLM enhancement error: {enhance_error}")
-                        # Fallback to basic markdown conversion
+                        # Fallback to PowerPoint processor's own markdown conversion
                         markdown_content = processor.markdown_converter.convert_structured_data_to_markdown(
-                            structured_data, convert_slide_titles=True
+                            structured_data, convert_slide_titles=False  # XML controls titles
                         )
-                        # Add metadata as comment
+                        # Add metadata context
+                        markdown_content = processor.metadata_extractor.add_pptx_metadata_for_claude(
+                            markdown_content, pptx_metadata
+                        )
+                        # Add error comment
                         metadata_comment = f"\n<!-- Enterprise LLM Error: {enhance_error} -->\n"
                         markdown_content = metadata_comment + markdown_content
                     else:
@@ -142,8 +148,13 @@ def convert_pptx_enhanced_enterprise(file_data, filename, enhance=True):
                         if not enhance_error:
                             markdown_content = enhanced_content
             else:
-                # No enhancement - use basic conversion
-                markdown_content = processor.convert_pptx_to_markdown_enhanced(tmp_file_path, convert_slide_titles=True)
+                # No enhancement - use PowerPoint processor's sophisticated processing
+                if processor._has_xml_access(tmp_file_path):
+                    print("🎯 Using sophisticated XML processing without LLM enhancement...")
+                    markdown_content = processor.convert_pptx_to_markdown_enhanced(tmp_file_path, convert_slide_titles=False)
+                else:
+                    print("📄 Using MarkItDown fallback...")
+                    markdown_content = processor._simple_markitdown_processing(tmp_file_path)
 
         finally:
             # Clean up temporary file

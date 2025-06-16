@@ -1,6 +1,6 @@
 """
-Simple Enterprise LLM Converter - Debug Version
-No fallbacks, just direct connection testing
+Enterprise LLM Converter - FIXED to use PowerPoint processor's markdown converter
+Now properly uses the sophisticated PowerPoint processor output with semantic roles
 """
 
 import os
@@ -43,9 +43,7 @@ Output clean, readable markdown that maintains the original document's intent bu
 
 
 class EnterpriseLLMClient:
-    """
-    Simple client for testing enterprise LLM connection
-    """
+    """Simple client for testing enterprise LLM connection"""
 
     def __init__(self):
         """Initialize and test connection immediately"""
@@ -130,9 +128,7 @@ class EnterpriseLLMClient:
             logger.warning(f"⚠️ Connection test inconclusive: {e}")
 
     def call_model(self, content: str) -> Tuple[str, Optional[str]]:
-        """
-        Call model with slide batch prompt
-        """
+        """Call model with slide batch prompt"""
         logger.info("🚀 Calling enterprise model...")
 
         # Use slide batch prompt
@@ -185,9 +181,7 @@ class EnterpriseLLMClient:
 
 
 class EnterpriseLLMEnhancer:
-    """
-    Simple enhancer for testing
-    """
+    """Enhanced version that uses PowerPoint processor's markdown converter"""
 
     def __init__(self):
         """Initialize with immediate connection test"""
@@ -198,23 +192,35 @@ class EnterpriseLLMEnhancer:
     def enhance_powerpoint_content(self, structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
     Tuple[str, Optional[str]]:
         """
-        Process PowerPoint content in batches of 5 slides
+        FIXED: Process PowerPoint content using the sophisticated markdown converter
         """
-        logger.info(f"🎯 Processing {source_filename}...")
+        logger.info(f"🎯 Processing {source_filename} with PowerPoint processor markdown converter...")
 
-        # First convert structured data to basic markdown from PowerPoint processor
-        basic_markdown = self._convert_structured_to_basic_markdown(structured_data, metadata, source_filename)
-        logger.info(f"📝 Generated basic markdown: {len(basic_markdown)} characters")
+        # FIXED: Use the PowerPoint processor's markdown converter instead of basic conversion
+        from src.processors.powerpoint import MarkdownConverter
+        markdown_converter = MarkdownConverter()
 
-        # Split into slides based on HTML markers
+        # Convert structured data using the sophisticated markdown converter
+        # This preserves semantic roles and proper formatting
+        basic_markdown = markdown_converter.convert_structured_data_to_markdown(
+            structured_data,
+            convert_slide_titles=False  # XML semantic roles control titles
+        )
+
+        logger.info(f"📝 Generated markdown with PowerPoint processor: {len(basic_markdown)} characters")
+
+        # Add metadata context for enterprise LLM
+        metadata_content = self._process_metadata(metadata, source_filename)
+        if metadata_content:
+            # Prepend metadata as comment for LLM context
+            basic_markdown = f"<!-- POWERPOINT METADATA:\n{metadata_content}\n-->\n\n{basic_markdown}"
+
+        # Split into slides based on slide markers for batch processing
         slide_batches = self._split_into_slide_batches(basic_markdown)
         logger.info(f"📊 Split into {len(slide_batches)} batches of max 5 slides each")
 
-        # Process metadata separately
-        metadata_content = self._process_metadata(metadata, source_filename)
-
-        # Process each batch
-        enhanced_parts = [metadata_content] if metadata_content else []
+        # Process each batch with enterprise LLM
+        enhanced_parts = []
 
         for i, batch in enumerate(slide_batches):
             logger.info(f"🚀 Processing batch {i + 1}/{len(slide_batches)}...")
@@ -234,66 +240,8 @@ class EnterpriseLLMEnhancer:
         logger.info(f"✅ Final content: {len(final_content)} characters")
         return final_content, None
 
-    def _convert_structured_to_basic_markdown(self, structured_data: Dict, metadata: Dict, source_filename: str) -> str:
-        """
-        Convert structured PowerPoint data to basic markdown with slide markers
-        """
-        markdown_parts = []
-
-        # Add metadata as HTML comment for the LLM
-        if metadata:
-            markdown_parts.append("<!-- POWERPOINT METADATA FOR CLAUDE:")
-            for key, value in metadata.items():
-                if value:
-                    markdown_parts.append(f"{key}: {value}")
-            markdown_parts.append("-->")
-
-        # Process each slide with HTML markers
-        for slide in structured_data.get("slides", []):
-            slide_parts = []
-            slide_parts.append(f"<!-- Slide {slide['slide_number']} -->")
-
-            # Process content blocks
-            for block in slide.get("content_blocks", []):
-                if block.get("type") == "text":
-                    for para in block.get("paragraphs", []):
-                        text = para.get("clean_text", "").strip()
-                        if text:
-                            hints = para.get("hints", {})
-                            if hints.get("is_bullet"):
-                                level = hints.get("bullet_level", 0)
-                                indent = "  " * level
-                                slide_parts.append(f"{indent}- {text}")
-                            else:
-                                slide_parts.append(text)
-
-                elif block.get("type") == "table":
-                    table_data = block.get("data", [])
-                    if table_data:
-                        for i, row in enumerate(table_data):
-                            slide_parts.append("| " + " | ".join(row) + " |")
-                            if i == 0:  # Header separator
-                                slide_parts.append("| " + " | ".join("---" for _ in row) + " |")
-
-                elif block.get("type") == "image":
-                    alt_text = block.get("alt_text", "Image")
-                    slide_parts.append(f"![{alt_text}](image)")
-
-                elif block.get("type") == "chart":
-                    title = block.get("title", "Chart")
-                    slide_parts.append(f"**Chart: {title}**")
-                    # Ignore diagram markers for now as requested
-
-            # Add slide content if not empty
-            if len(slide_parts) > 1:  # More than just the slide marker
-                markdown_parts.append("\n".join(slide_parts))
-
-        return "\n\n".join(markdown_parts)
-
     def _split_into_slide_batches(self, markdown_content: str) -> list:
-        """
-        Split markdown content into batches of 5 slides based on HTML markers
-        """
+        """Split markdown content into batches of 5 slides based on slide markers"""
         # Split by slide markers
         slide_pattern = r'<!-- Slide (\d+) -->'
         slides = re.split(slide_pattern, markdown_content)
@@ -324,27 +272,24 @@ class EnterpriseLLMEnhancer:
         return batches
 
     def _process_metadata(self, metadata: Dict, source_filename: str) -> str:
-        """
-        Process metadata separately
-        """
+        """Process metadata separately for LLM context"""
         if not metadata:
             return ""
 
-        metadata_parts = [f"# Document Analysis: {source_filename}", ""]
+        metadata_parts = []
 
+        # Add key metadata that helps with context
         for key, value in metadata.items():
-            if value:
+            if value and key in ['title', 'author', 'subject', 'keywords', 'slide_count', 'created', 'modified']:
                 clean_key = key.replace('_', ' ').title()
-                metadata_parts.append(f"**{clean_key}:** {value}")
+                metadata_parts.append(f"{clean_key}: {value}")
 
-        return "\n".join(metadata_parts)
+        return "\n".join(metadata_parts) if metadata_parts else ""
 
 
 def enhance_markdown_with_enterprise_llm(structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
 Tuple[str, Optional[str]]:
-    """
-    Simple test function
-    """
+    """Simple test function"""
     try:
         enhancer = EnterpriseLLMEnhancer()
         return enhancer.enhance_powerpoint_content(structured_data, metadata, source_filename)
@@ -352,3 +297,4 @@ Tuple[str, Optional[str]]:
         error_msg = f"Enterprise LLM failed: {str(e)}"
         logger.error(error_msg)
         raise Exception(error_msg)  # Don't fall back - let it fail so we can debug
+
