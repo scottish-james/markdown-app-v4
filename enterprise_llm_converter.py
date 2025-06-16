@@ -7,22 +7,38 @@ import os
 import json
 import requests
 import logging
+import re
 from typing import Tuple, Optional, Dict
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Simple prompt from working Claude system
-SIMPLE_PROMPT = """
-You are a PowerPoint to Markdown converter. Clean up this markdown:
+# Proven prompt from working Claude system for slide batches
+SLIDE_BATCH_PROMPT = """
+You are a PowerPoint to Markdown converter. You receive a batch of PowerPoint slides (max 5 slides) and must clean them up into professional, well-structured markdown.
 
-1. Fix bullet point hierarchies - use 2-space indentation
-2. Make slide titles into # headers
-3. Preserve ALL content and hyperlinks
-4. Use proper markdown syntax
+Your job:
+1. Fix bullet point hierarchies - create proper nested lists with 2-space indentation
+2. Identify slide titles and format as # headers
+3. Identify sub headings and format as ### headers 
+4. Preserve ALL hyperlinks and formatting (bold, italic)
+5. Fix broken list structures
+6. Ensure tables are properly formatted
+7. Clean up spacing and structure
+8. Keep slide markers like <!-- Slide 1 --> for reference
 
-Keep ALL original text content. Output clean, readable markdown.
+Key Rules:
+- Keep ALL original text content - this is critical for regulatory documents
+- Fix bullet nesting based on context and content
+- Make short, standalone text into appropriate ### headers 
+- Preserve all hyperlinks exactly as provided
+- Use proper markdown syntax throughout
+- Look for numbered sequences that are out of order and fix them
+
+The input will have slide markers like <!-- Slide 1 --> to separate slides. Keep these markers in your output.
+
+Output clean, readable markdown that maintains the original document's intent but fixes structure and formatting issues.
 """
 
 
@@ -115,51 +131,44 @@ class EnterpriseLLMClient:
 
     def call_model(self, content: str) -> Tuple[str, Optional[str]]:
         """
-        Simple model call with detailed logging
+        Call model with slide batch prompt
         """
         logger.info("🚀 Calling enterprise model...")
 
-        # Simple payload
+        # Use slide batch prompt
         payload = {
             "messages": [
-                {"role": "system", "content": SIMPLE_PROMPT},
+                {"role": "system", "content": SLIDE_BATCH_PROMPT},
                 {"role": "user", "content": content}
             ],
-            "max_tokens": 2000,
+            "max_tokens": 4000,  # Increased for batch processing
             "temperature": 0.1
         }
 
         logger.info(f"📤 Payload size: {len(json.dumps(payload))} characters")
-        logger.info(f"📤 Headers: {list(self.headers.keys())}")
 
         try:
             response = requests.post(
                 self.model_url,
                 headers=self.headers,
                 json=payload,
-                timeout=60
+                timeout=120  # Increased timeout for batches
             )
 
             logger.info(f"📥 Response status: {response.status_code}")
-            logger.info(f"📥 Response headers: {dict(response.headers)}")
 
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"📥 Response keys: {list(result.keys())}")
 
                 # Try different response formats
                 if "choices" in result and result["choices"]:
                     content = result["choices"][0]["message"]["content"]
-                    logger.info("✅ Extracted content from choices format")
                 elif "generated_text" in result:
                     content = result["generated_text"]
-                    logger.info("✅ Extracted content from generated_text format")
                 elif "content" in result:
                     content = result["content"]
-                    logger.info("✅ Extracted content from content format")
                 else:
                     content = str(result)
-                    logger.warning("⚠️ Using raw response as content")
 
                 logger.info(f"✅ Success! Generated {len(content)} characters")
                 return content, None
@@ -168,11 +177,6 @@ class EnterpriseLLMClient:
                 error_msg = f"API error {response.status_code}: {response.text}"
                 logger.error(f"❌ {error_msg}")
                 return "", error_msg
-
-        except requests.exceptions.Timeout:
-            error_msg = "Request timeout (60 seconds)"
-            logger.error(f"❌ {error_msg}")
-            return "", error_msg
 
         except Exception as e:
             error_msg = f"Request failed: {str(e)}"
@@ -194,27 +198,164 @@ class EnterpriseLLMEnhancer:
     def enhance_powerpoint_content(self, structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
     Tuple[str, Optional[str]]:
         """
-        Simple processing - just test the connection
+        Process PowerPoint content in batches of 5 slides
         """
         logger.info(f"🎯 Processing {source_filename}...")
 
-        # Create simple test content
-        test_content = f"# Test Document: {source_filename}\n\n"
-        test_content += "- First bullet point\n"
-        test_content += "- Second bullet point\n"
-        test_content += "\nThis is a test of the enterprise LLM connection."
+        # First convert structured data to basic markdown from PowerPoint processor
+        basic_markdown = self._convert_structured_to_basic_markdown(structured_data, metadata, source_filename)
+        logger.info(f"📝 Generated basic markdown: {len(basic_markdown)} characters")
 
-        logger.info(f"📝 Test content: {len(test_content)} characters")
+        # Split into slides based on HTML markers
+        slide_batches = self._split_into_slide_batches(basic_markdown)
+        logger.info(f"📊 Split into {len(slide_batches)} batches of max 5 slides each")
 
-        # Call the model
-        enhanced_content, error = self.client.call_model(test_content)
+        # Process metadata separately
+        metadata_content = self._process_metadata(metadata, source_filename)
 
-        if error:
-            logger.error(f"❌ Enhancement failed: {error}")
-            return test_content, error
+        # Process each batch
+        enhanced_parts = [metadata_content] if metadata_content else []
 
-        logger.info("✅ Enhancement successful!")
-        return enhanced_content, None
+        for i, batch in enumerate(slide_batches):
+            logger.info(f"🚀 Processing batch {i + 1}/{len(slide_batches)}...")
+
+            enhanced_batch, error = self.client.call_model(batch)
+
+            if error:
+                logger.error(f"❌ Batch {i + 1} failed: {error}")
+                enhanced_parts.append(batch)  # Use original on error
+            else:
+                logger.info(f"✅ Batch {i + 1} enhanced successfully")
+                enhanced_parts.append(enhanced_batch)
+
+        # Combine all parts
+        final_content = "\n\n---\n\n".join(enhanced_parts)
+
+        logger.info(f"✅ Final content: {len(final_content)} characters")
+        return final_content, None
+
+    def _convert_structured_to_basic_markdown(self, structured_data: Dict, metadata: Dict, source_filename: str) -> str:
+        """
+        Convert structured PowerPoint data to basic markdown with slide markers
+        """
+        markdown_parts = []
+
+        # Add metadata as HTML comment for the LLM
+        if metadata:
+            markdown_parts.append("<!-- POWERPOINT METADATA FOR CLAUDE:")
+            for key, value in metadata.items():
+                if value:
+                    markdown_parts.append(f"{key}: {value}")
+            markdown_parts.append("-->")
+
+        # Process each slide with HTML markers
+        for slide in structured_data.get("slides", []):
+            slide_parts = []
+            slide_parts.append(f"<!-- Slide {slide['slide_number']} -->")
+
+            # Process content blocks
+            for block in slide.get("content_blocks", []):
+                if block.get("type") == "text":
+                    for para in block.get("paragraphs", []):
+                        text = para.get("clean_text", "").strip()
+                        if text:
+                            hints = para.get("hints", {})
+                            if hints.get("is_bullet"):
+                                level = hints.get("bullet_level", 0)
+                                indent = "  " * level
+                                slide_parts.append(f"{indent}- {text}")
+                            else:
+                                slide_parts.append(text)
+
+                elif block.get("type") == "table":
+                    table_data = block.get("data", [])
+                    if table_data:
+                        for i, row in enumerate(table_data):
+                            slide_parts.append("| " + " | ".join(row) + " |")
+                            if i == 0:  # Header separator
+                                slide_parts.append("| " + " | ".join("---" for _ in row) + " |")
+
+                elif block.get("type") == "image":
+                    alt_text = block.get("alt_text", "Image")
+                    slide_parts.append(f"![{alt_text}](image)")
+
+                elif block.get("type") == "chart":
+                    title = block.get("title", "Chart")
+                    slide_parts.append(f"**Chart: {title}**")
+                    # Ignore diagram markers for now as requested
+
+            # Add slide content if not empty
+            if len(slide_parts) > 1:  # More than just the slide marker
+                markdown_parts.append("\n".join(slide_parts))
+
+        return "\n\n".join(markdown_parts)
+
+    def _split_into_slide_batches(self, markdown_content: str) -> list:
+        """
+        Split markdown content into batches of 5 slides based on HTML markers
+        """
+        import re
+
+        # Split by slide markers
+        slide_pattern = r'<!-- Slide (\d+) -->'
+        slides = re.split(slide_pattern, markdown_content)
+
+        # Remove empty parts and metadata
+        clean_slides = []
+        current_slide = ""
+
+        for i, part in enumerate(slides):
+            if re.match(r'^\d+
+
+
+def enhance_markdown_with_enterprise_llm(structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
+Tuple[str, Optional[str]]:
+    """
+    Simple test function
+    """
+    try:
+        enhancer = EnterpriseLLMEnhancer()
+        return enhancer.enhance_powerpoint_content(structured_data, metadata, source_filename)
+    except Exception as e:
+        error_msg = f"Enterprise LLM failed: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg)  # Don't fall back - let it fail so we can debug
+
+, part):  # This is a slide number
+if current_slide:
+    clean_slides.append(current_slide.strip())
+current_slide = f"<!-- Slide {part} -->"
+elif part.strip() and not part.startswith("<!-- POWERPOINT METADATA"):
+current_slide += "\n" + part
+
+# Add final slide
+if current_slide:
+    clean_slides.append(current_slide.strip())
+
+# Group into batches of 5
+batches = []
+for i in range(0, len(clean_slides), 5):
+    batch = clean_slides[i:i + 5]
+batches.append("\n\n".join(batch))
+
+return batches
+
+
+def _process_metadata(self, metadata: Dict, source_filename: str) -> str:
+    """
+    Process metadata separately
+    """
+    if not metadata:
+        return ""
+
+    metadata_parts = [f"# Document Analysis: {source_filename}", ""]
+
+    for key, value in metadata.items():
+        if value:
+            clean_key = key.replace('_', ' ').title()
+            metadata_parts.append(f"**{clean_key}:** {value}")
+
+    return "\n".join(metadata_parts)
 
 
 def enhance_markdown_with_enterprise_llm(structured_data: Dict, metadata: Dict, source_filename: str = "unknown") -> \
