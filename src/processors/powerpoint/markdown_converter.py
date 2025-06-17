@@ -1,21 +1,5 @@
 """
-Markdown Converter - Updated to use XML-based semantic roles for title detection
-No more pattern matching - trusts the XML semantic analysis completely
-
-ARCHITECTURE OVERVIEW:
-This component converts the structured data from ContentExtractor into clean,
-readable markdown format. It now trusts the semantic role information from
-XML analysis rather than trying to guess titles from text patterns.
-
-TITLE DETECTION STRATEGY:
-- XML semantic role "title" → H1 heading (no bullet point)
-- XML semantic role "subtitle" → H2 heading (no bullet point)
-- All other content → processed normally with bullets/formatting
-
-SEMANTIC TRUST:
-The AccessibilityOrderExtractor already did the hard work of XML analysis
-to identify titles. We trust that completely and don't second-guess it
-with text pattern matching.
+Debug Markdown Converter - Enhanced with debugging to track duplication
 """
 
 import re
@@ -24,91 +8,106 @@ import re
 class MarkdownConverter:
     """
     Converts structured presentation data to clean markdown format using XML semantic roles.
+    ENHANCED: Added debugging to track where duplication might occur.
     """
 
     def convert_structured_data_to_markdown(self, data, convert_slide_titles=True):
         """
         Main conversion entry point - processes entire presentation.
-
-        SEMANTIC-BASED PROCESSING:
-        - Titles are already identified by XML analysis in semantic_role field
-        - No more text pattern guessing - trust the XML analysis
-        - Titles become H1 headings directly, not bullet points
-
-        Args:
-            data (dict): Structured presentation data from ContentExtractor
-            convert_slide_titles (bool): Keep for compatibility, but XML controls titles now
-
-        Returns:
-            str: Complete markdown document with semantic-based title detection
+        ENHANCED: Added debugging to track slide processing and detect duplication.
         """
+        print(f"\nDEBUG: MarkdownConverter starting with {len(data['slides'])} slides")
+
         markdown_parts = []
 
-        for slide in data["slides"]:
+        for slide_idx, slide in enumerate(data["slides"]):
+            print(
+                f"\nDEBUG: Converting slide {slide['slide_number']} with {len(slide['content_blocks'])} content blocks")
+
             # Add slide marker for debugging
-            markdown_parts.append(f"\n<!-- Slide {slide['slide_number']} -->\n")
+            slide_marker = f"\n<!-- Slide {slide['slide_number']} -->\n"
+            markdown_parts.append(slide_marker)
+            print(f"DEBUG: Added slide marker")
 
             # Process each content block with semantic role awareness
-            for block in slide["content_blocks"]:
+            block_count = 0
+            for block_idx, block in enumerate(slide["content_blocks"]):
+                print(
+                    f"DEBUG: Processing block {block_idx + 1}: type={block['type']}, semantic_role={block.get('semantic_role', 'unknown')}")
+
+                block_markdown = None
                 if block["type"] == "text":
-                    # NEW: Check semantic role for direct title conversion
-                    markdown_parts.append(self._convert_text_block_to_markdown(block))
+                    # Check semantic role for direct title conversion
+                    block_markdown = self._convert_text_block_to_markdown(block)
                 elif block["type"] == "table":
-                    markdown_parts.append(self._convert_table_to_markdown(block))
+                    block_markdown = self._convert_table_to_markdown(block)
                 elif block["type"] == "image":
-                    markdown_parts.append(self._convert_image_to_markdown(block))
+                    block_markdown = self._convert_image_to_markdown(block)
                 elif block["type"] == "chart":
-                    markdown_parts.append(self._convert_chart_to_markdown(block))
+                    block_markdown = self._convert_chart_to_markdown(block)
                 elif block["type"] == "group":
-                    markdown_parts.append(self._convert_group_to_markdown(block))
+                    block_markdown = self._convert_group_to_markdown(block)
+
+                if block_markdown:
+                    markdown_parts.append(block_markdown)
+                    block_count += 1
+                    print(f"DEBUG: Added markdown for block {block_idx + 1}")
+                    # Show preview of what was added
+                    preview = block_markdown.replace('\n', ' ')[:100] + "..." if len(
+                        block_markdown) > 100 else block_markdown.replace('\n', ' ')
+                    print(f"DEBUG: Content preview: {preview}")
+                else:
+                    print(f"DEBUG: Block {block_idx + 1} produced no markdown")
+
+            print(f"DEBUG: Slide {slide['slide_number']} produced {block_count} markdown blocks")
 
         # Combine all parts with proper spacing
         markdown_content = "\n\n".join(filter(None, markdown_parts))
 
-        # NEW: No post-processing needed - titles already converted based on semantic roles
+        print(f"\nDEBUG: Final markdown has {len(markdown_parts)} parts")
+        print(f"DEBUG: Final markdown length: {len(markdown_content)} characters")
+
         return markdown_content
 
     def _convert_text_block_to_markdown(self, block):
         """
         Convert text content blocks to markdown using semantic role information.
-
-        SEMANTIC PROCESSING:
-        - semantic_role "title" → H1 heading
-        - semantic_role "subtitle" → H2 heading
-        - All other content → normal paragraph processing
-
-        Args:
-            block (dict): Text content block with semantic role and paragraphs
-
-        Returns:
-            str: Formatted markdown text with proper semantic structure
+        ENHANCED: Added debugging to track semantic role processing.
         """
         lines = []
         semantic_role = block.get("semantic_role", "other")
 
-        # NEW: Handle semantic roles directly without pattern matching
+        print(
+            f"DEBUG: Converting text block with semantic_role='{semantic_role}', {len(block.get('paragraphs', []))} paragraphs")
+
+        # Handle semantic roles directly without pattern matching
         if semantic_role == "title":
             # Titles become H1 headings directly
-            for para in block["paragraphs"]:
+            for para_idx, para in enumerate(block["paragraphs"]):
                 if para.get("clean_text"):
                     formatted_text = self._build_formatted_text_from_runs(
                         para["formatted_runs"], para["clean_text"]
                     )
-                    lines.append(f"# {formatted_text}")
+                    title_line = f"# {formatted_text}"
+                    lines.append(title_line)
+                    print(f"DEBUG: Added title: {title_line}")
         elif semantic_role == "subtitle":
             # Subtitles become H2 headings directly
-            for para in block["paragraphs"]:
+            for para_idx, para in enumerate(block["paragraphs"]):
                 if para.get("clean_text"):
                     formatted_text = self._build_formatted_text_from_runs(
                         para["formatted_runs"], para["clean_text"]
                     )
-                    lines.append(f"## {formatted_text}")
+                    subtitle_line = f"## {formatted_text}"
+                    lines.append(subtitle_line)
+                    print(f"DEBUG: Added subtitle: {subtitle_line}")
         else:
             # Process all other content normally
-            for para in block["paragraphs"]:
+            for para_idx, para in enumerate(block["paragraphs"]):
                 line = self._convert_paragraph_to_markdown(para)
                 if line:
                     lines.append(line)
+                    print(f"DEBUG: Added content line: {line[:50]}{'...' if len(line) > 50 else ''}")
 
         # Combine paragraphs with newline separation
         result = "\n".join(lines)
@@ -120,13 +119,7 @@ class MarkdownConverter:
         return result
 
     def _convert_paragraph_to_markdown(self, para):
-        """
-        Convert individual paragraphs to markdown with structure and formatting.
-
-        SIMPLIFIED PROCESSING:
-        Since titles are handled at the block level using semantic roles,
-        this method only deals with content paragraphs (bullets, text, etc.)
-        """
+        """Convert individual paragraphs to markdown with structure and formatting."""
         if not para.get("clean_text"):
             return ""
 
@@ -162,10 +155,10 @@ class MarkdownConverter:
             return formatted_text
 
     def _convert_group_to_markdown(self, block):
-        """
-        Convert grouped shapes to markdown by processing extracted content with semantic awareness.
-        """
+        """Convert grouped shapes to markdown by processing extracted content with semantic awareness."""
         extracted_blocks = block.get("extracted_blocks", [])
+
+        print(f"DEBUG: Converting group with {len(extracted_blocks)} extracted blocks")
 
         if not extracted_blocks:
             return ""
@@ -173,7 +166,9 @@ class MarkdownConverter:
         # Process each extracted block with semantic role handling
         content_parts = []
 
-        for extracted_block in extracted_blocks:
+        for block_idx, extracted_block in enumerate(extracted_blocks):
+            print(f"DEBUG: Processing group block {block_idx + 1}: type={extracted_block['type']}")
+
             content = None
 
             if extracted_block["type"] == "text":
@@ -197,6 +192,7 @@ class MarkdownConverter:
 
             if content:
                 content_parts.append(content)
+                print(f"DEBUG: Added group content: {content[:50]}{'...' if len(content) > 50 else ''}")
 
         # Combine all content with proper spacing
         group_md = "\n\n".join(content_parts) if content_parts else ""
@@ -208,9 +204,7 @@ class MarkdownConverter:
         return group_md
 
     def _build_formatted_text_from_runs(self, runs, clean_text):
-        """
-        Build formatted text from runs with FIXED consistent formatting handling.
-        """
+        """Build formatted text from runs with consistent formatting handling."""
         if not runs:
             return clean_text
 
@@ -232,13 +226,13 @@ class MarkdownConverter:
         else:
             all_same_hyperlink = False
 
-        # Apply consistent formatting to entire text (FIXED approach)
+        # Apply consistent formatting to entire text
         if all_bold and all_italic and not all_same_hyperlink:
             return f"***{clean_text}***"  # Bold + italic
         elif all_bold and not all_same_hyperlink:
-            return f"**{clean_text}**"  # Fixed: Single application of bold
+            return f"**{clean_text}**"  # Bold
         elif all_italic and not all_same_hyperlink:
-            return f"*{clean_text}*"  # Single application of italic
+            return f"*{clean_text}*"  # Italic
         elif all_same_hyperlink:
             # All runs have same hyperlink - apply to entire text
             hyperlink = text_runs[0]["hyperlink"]
@@ -251,7 +245,7 @@ class MarkdownConverter:
             else:
                 return f"[{clean_text}]({hyperlink})"
 
-        # Mixed formatting - use per-run logic (original approach)
+        # Mixed formatting - use per-run logic
         formatted_parts = []
 
         for run in runs:
@@ -275,7 +269,6 @@ class MarkdownConverter:
 
         return "".join(formatted_parts)
 
-    # Keep all the other conversion methods unchanged...
     def _convert_table_to_markdown(self, block):
         """Convert table data to standard markdown table format."""
         if not block["data"]:
@@ -331,12 +324,3 @@ class MarkdownConverter:
             chart_md = f"[{chart_md}]({block['hyperlink']})"
 
         return chart_md
-
-    # REMOVED: All the old title detection methods that used pattern matching
-    # - _convert_slide_titles_to_headings (no longer needed)
-    # - _is_likely_slide_title (no longer needed)
-    # - _extract_title_from_bullet (no longer needed)
-    # - _contains_multiple_sentences (no longer needed)
-
-    # The XML semantic analysis already identified titles correctly
-

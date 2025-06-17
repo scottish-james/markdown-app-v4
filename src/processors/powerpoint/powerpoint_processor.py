@@ -121,42 +121,78 @@ class PowerPointProcessor:
             raise Exception(f"MarkItDown processing failed: {str(e)}")
 
     def extract_presentation_data(self, presentation):
-        """Extract structured data from entire presentation using component coordination."""
+        """
+        Extract structured data from entire presentation using component coordination.
+        ENHANCED: Added debugging to track slide processing.
+        """
         data = {
             "total_slides": len(presentation.slides),
             "slides": []
         }
 
+        print(f"DEBUG: Starting presentation extraction with {len(presentation.slides)} slides")
+
         # Process each slide individually while maintaining order
         for slide_idx, slide in enumerate(presentation.slides, 1):
+            print(f"\n{'=' * 50}")
+            print(f"DEBUG: EXTRACTING SLIDE {slide_idx} of {len(presentation.slides)}")
+            print(f"{'=' * 50}")
+
             slide_data = self.extract_slide_data(slide, slide_idx)
             data["slides"].append(slide_data)
 
+            print(f"DEBUG: Slide {slide_idx} added to presentation data")
+
+        print(f"\nDEBUG: Presentation extraction complete - {len(data['slides'])} slides processed")
         return data
 
     def extract_slide_data(self, slide, slide_number):
         """
         Extract content from individual slide using coordinated component pipeline.
-        CRITICAL FIX: Now properly handles group expansion to avoid double processing.
+        CRITICAL FIX: Enhanced debugging and group expansion detection.
         """
+        print(f"\n=== PROCESSING SLIDE {slide_number} ===")
+
         # Get shapes in proper reading order using AccessibilityOrderExtractor
         ordered_shapes = self.accessibility_extractor.get_slide_reading_order(slide, slide_number)
+        extraction_method = self.accessibility_extractor.get_last_extraction_method()
+
+        print(f"DEBUG: Original slide has {len(slide.shapes)} shapes")
+        print(f"DEBUG: Accessibility extractor returned {len(ordered_shapes)} shapes")
+        print(f"DEBUG: Extraction method: {extraction_method}")
 
         slide_data = {
             "slide_number": slide_number,
             "content_blocks": [],
-            "extraction_method": self.accessibility_extractor.get_last_extraction_method()
+            "extraction_method": extraction_method
         }
 
         # CRITICAL: Check if groups were expanded by checking extraction method
         # Version 2 uses "semantic_accessibility_order" and DOES expand groups at slide level
-        groups_were_expanded = self.accessibility_extractor.get_last_extraction_method() == "semantic_accessibility_order"
+        groups_were_expanded = extraction_method == "semantic_accessibility_order"
 
-        print(f"DEBUG: Slide {slide_number} - Groups expanded: {groups_were_expanded}")
-        print(f"DEBUG: Processing {len(ordered_shapes)} shapes")
+        print(f"DEBUG: Groups were expanded: {groups_were_expanded}")
+
+        # Show what shapes we're processing
+        print(f"DEBUG: Shapes to process:")
+        for i, shape in enumerate(ordered_shapes[:10]):  # Show first 10
+            shape_type = str(shape.shape_type).split('.')[-1] if hasattr(shape.shape_type, '__str__') else 'unknown'
+            try:
+                text_preview = ""
+                if hasattr(shape, 'text') and shape.text:
+                    text_preview = shape.text.strip()[:30] + "..."
+                elif hasattr(shape, 'text_frame') and shape.text_frame:
+                    text_preview = shape.text_frame.text.strip()[:30] + "..."
+                else:
+                    text_preview = "No text"
+                print(f"  {i + 1}. {shape_type}: {text_preview}")
+            except:
+                print(f"  {i + 1}. {shape_type}: Error getting text")
 
         # Extract content from each shape using ContentExtractor + TextProcessor
-        for shape in ordered_shapes:
+        processed_count = 0
+        for i, shape in enumerate(ordered_shapes):
+            print(f"\nDEBUG: Processing shape {i + 1}/{len(ordered_shapes)}")
             block = self.content_extractor.extract_shape_content(
                 shape,
                 self.text_processor,
@@ -165,8 +201,13 @@ class PowerPointProcessor:
             )
             if block:
                 slide_data["content_blocks"].append(block)
+                processed_count += 1
+                print(f"DEBUG: Added content block (type: {block.get('type', 'unknown')})")
+            else:
+                print(f"DEBUG: Shape produced no content block")
 
-        print(f"DEBUG: Slide {slide_number} produced {len(slide_data['content_blocks'])} content blocks")
+        print(
+            f"DEBUG: Slide {slide_number} final result: {processed_count} content blocks from {len(ordered_shapes)} shapes")
         return slide_data
 
     def debug_accessibility_order(self, file_path, slide_number=1):

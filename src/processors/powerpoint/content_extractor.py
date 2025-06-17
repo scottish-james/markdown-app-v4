@@ -16,6 +16,7 @@ class ContentExtractor:
     def extract_shape_content(self, shape, text_processor, accessibility_extractor=None, groups_already_expanded=False):
         """
         Main extraction router - delegates based on shape type and captures semantic role.
+        FIXED: More defensive shape type checking to avoid enum errors.
 
         Args:
             groups_already_expanded: If True, skip group processing as shapes already expanded
@@ -26,19 +27,26 @@ class ContentExtractor:
         # Capture semantic role from XML analysis
         semantic_role = "other"
         if accessibility_extractor:
-            semantic_role = accessibility_extractor._get_semantic_role_from_xml(shape)
+            try:
+                semantic_role = accessibility_extractor._get_semantic_role_from_xml(shape)
+            except Exception as e:
+                print(f"DEBUG: Error getting semantic role: {e}")
 
         content_block = None
 
         try:
-            # Route based on shape type using explicit type checking
-            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            # Get shape type safely
+            shape_type = shape.shape_type
+            shape_type_name = str(shape_type).split('.')[-1] if hasattr(shape_type, '__str__') else 'unknown'
+
+            # Route based on shape type using string comparison for safety
+            if shape_type_name == 'PICTURE':
                 content_block = self.extract_image(shape)
-            elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+            elif shape_type_name == 'TABLE':
                 content_block = self.extract_table(shape.table, text_processor)
             elif hasattr(shape, 'has_chart') and shape.has_chart:
                 content_block = self.extract_chart(shape)
-            elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            elif shape_type_name == 'GROUP':
                 # CRITICAL FIX: Only process groups if they haven't been expanded already
                 if not groups_already_expanded:
                     content_block = self.extract_group(shape, text_processor, accessibility_extractor)
@@ -54,9 +62,14 @@ class ContentExtractor:
             print(f"Warning: Error extracting shape content: {e}")
             return None
 
-        # Handle shapes without text content (for diagram analysis)
+        # Handle shapes without text content - but filter out noise
         if not content_block:
-            content_block = self._create_non_text_content_block(shape, shape_info)
+            # FIXED: Only create content blocks for meaningful non-text shapes
+            if self._is_meaningful_non_text_shape(shape, shape_info):
+                content_block = self._create_non_text_content_block(shape, shape_info)
+            else:
+                # Skip meaningless shapes (lines, basic auto-shapes, etc.)
+                return None
 
         # Add shape analysis info and semantic role for downstream processing
         if content_block:
@@ -67,6 +80,53 @@ class ContentExtractor:
                 print(f"Warning: Error adding shape info: {e}")
 
         return content_block
+
+    def _is_meaningful_non_text_shape(self, shape, shape_info):
+        """
+        Determine if a non-text shape is worth including in output.
+        FIXED: More defensive shape type checking to avoid enum errors.
+
+        Args:
+            shape: python-pptx Shape object
+            shape_info: Shape analysis info dict
+
+        Returns:
+            bool: True if shape should be included in output
+        """
+        try:
+            shape_type = shape.shape_type
+            shape_type_name = str(shape_type).split('.')[-1] if hasattr(shape_type, '__str__') else 'unknown'
+
+            # Always include images and charts (already handled above)
+            if shape_type_name in ['PICTURE', 'TABLE']:
+                return True
+
+            # Skip basic lines and connectors unless they're part of a larger diagram
+            if shape_type_name in ['LINE', 'CONNECTOR', 'FREEFORM']:
+                return False  # Usually just decorative
+
+            # Include meaningful auto-shapes (arrows, but not basic rectangles/circles)
+            if shape_type_name == 'AUTO_SHAPE':
+                auto_shape_type = shape_info.get("auto_shape_type", "")
+                # Include arrows as they often indicate flow/relationships
+                if self._is_arrow_shape(auto_shape_type):
+                    return True
+                # Skip basic geometric shapes
+                elif any(basic_type in str(auto_shape_type) for basic_type in [
+                    "RECTANGLE", "OVAL", "CIRCLE", "TRIANGLE", "DIAMOND", "HEXAGON"
+                ]):
+                    return False
+                # Include other auto-shapes (might be meaningful icons/symbols)
+                else:
+                    return True
+
+            # Include other shape types by default (might be meaningful)
+            return True
+
+        except Exception as e:
+            print(f"DEBUG: Error checking shape meaningfulness: {e}")
+            # If we can't determine, err on the side of inclusion
+            return True
 
     def extract_group(self, shape, text_processor, accessibility_extractor=None):
         """
@@ -238,67 +298,120 @@ class ContentExtractor:
             }
 
     def _create_non_text_content_block(self, shape, shape_info):
-        """Create content blocks for shapes without text content."""
+        """
+        Create content blocks for shapes without text content.
+        FIXED: More defensive shape type checking to avoid enum errors.
+        """
         try:
-            if shape.shape_type == MSO_SHAPE_TYPE.LINE:
-                return {"type": "line", "line_type": "simple"}
-            elif shape.shape_type == MSO_SHAPE_TYPE.CONNECTOR:
-                return {"type": "line", "line_type": "connector"}
-            elif shape.shape_type == MSO_SHAPE_TYPE.FREEFORM:
-                return {"type": "line", "line_type": "freeform"}
-            elif shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
-                if self._is_arrow_shape(shape_info["auto_shape_type"]):
-                    return {"type": "arrow", "arrow_type": shape_info["auto_shape_type"]}
+            shape_name = getattr(shape, 'name', '')
+            shape_type = shape.shape_type
+            shape_type_name = str(shape_type).split('.')[-1] if hasattr(shape_type, '__str__') else 'unknown'
+
+            if shape_type_name == 'LINE':
+                return {"type": "line", "line_type": "simple",
+                        "description": f"Line shape{f': {shape_name}' if shape_name else ''}"}
+            elif shape_type_name == 'CONNECTOR':
+                return {"type": "line", "line_type": "connector",
+                        "description": f"Connector{f': {shape_name}' if shape_name else ''}"}
+            elif shape_type_name == 'FREEFORM':
+                return {"type": "line", "line_type": "freeform",
+                        "description": f"Freeform shape{f': {shape_name}' if shape_name else ''}"}
+            elif shape_type_name == 'AUTO_SHAPE':
+                auto_shape_type = shape_info.get("auto_shape_type", "unknown")
+                if self._is_arrow_shape(auto_shape_type):
+                    return {
+                        "type": "arrow",
+                        "arrow_type": auto_shape_type,
+                        "description": f"Arrow ({auto_shape_type}){f': {shape_name}' if shape_name else ''}"
+                    }
                 else:
-                    return {"type": "shape", "shape_subtype": "auto_shape"}
+                    return {
+                        "type": "shape",
+                        "shape_subtype": "auto_shape",
+                        "description": f"Shape ({auto_shape_type}){f': {shape_name}' if shape_name else ''}"
+                    }
             else:
-                return {"type": "shape", "shape_subtype": "generic"}
-        except Exception:
-            return {"type": "shape", "shape_subtype": "unknown"}
+                return {
+                    "type": "shape",
+                    "shape_subtype": shape_type_name.lower(),
+                    "description": f"Shape ({shape_type_name}){f': {shape_name}' if shape_name else ''}"
+                }
+        except Exception as e:
+            print(f"DEBUG: Error creating non-text content block: {e}")
+            return {"type": "shape", "shape_subtype": "unknown", "description": "Unknown shape"}
 
     def _get_shape_analysis_info(self, shape):
-        """Get basic shape information for diagram analysis and debugging."""
+        """
+        Get basic shape information for diagram analysis and debugging.
+        FIXED: More defensive property access to avoid errors.
+        """
         shape_info = {
             "shape_type": "unknown",
             "auto_shape_type": None,
             "position": {
-                "top": getattr(shape, 'top', 0),
-                "left": getattr(shape, 'left', 0),
-                "width": getattr(shape, 'width', 0),
-                "height": getattr(shape, 'height', 0)
+                "top": 0,
+                "left": 0,
+                "width": 0,
+                "height": 0
             }
         }
 
         try:
             if hasattr(shape, 'shape_type'):
-                shape_info["shape_type"] = str(shape.shape_type).split('.')[-1]
-        except:
+                shape_type = shape.shape_type
+                shape_info["shape_type"] = str(shape_type).split('.')[-1] if hasattr(shape_type,
+                                                                                     '__str__') else 'unknown'
+        except Exception as e:
+            print(f"DEBUG: Error getting shape type: {e}")
             shape_info["shape_type"] = "unknown"
 
         try:
             if hasattr(shape, 'auto_shape_type'):
-                shape_info["auto_shape_type"] = str(shape.auto_shape_type).split('.')[-1]
-        except:
+                auto_shape_type = shape.auto_shape_type
+                shape_info["auto_shape_type"] = str(auto_shape_type).split('.')[-1] if hasattr(auto_shape_type,
+                                                                                               '__str__') else None
+        except Exception as e:
+            print(f"DEBUG: Error getting auto_shape_type: {e}")
+            pass
+
+        try:
+            shape_info["position"] = {
+                "top": getattr(shape, 'top', 0),
+                "left": getattr(shape, 'left', 0),
+                "width": getattr(shape, 'width', 0),
+                "height": getattr(shape, 'height', 0)
+            }
+        except Exception as e:
+            print(f"DEBUG: Error getting shape position: {e}")
             pass
 
         return shape_info
 
     def _is_arrow_shape(self, auto_shape_type):
-        """Determine if an auto shape is an arrow type."""
+        """
+        Determine if an auto shape is an arrow type.
+        FIXED: More defensive type checking.
+        """
         if not auto_shape_type:
             return False
 
-        arrow_types = [
-            "LEFT_ARROW", "DOWN_ARROW", "UP_ARROW", "RIGHT_ARROW",
-            "LEFT_RIGHT_ARROW", "UP_DOWN_ARROW", "QUAD_ARROW",
-            "LEFT_RIGHT_UP_ARROW", "BENT_ARROW", "U_TURN_ARROW",
-            "CURVED_LEFT_ARROW", "CURVED_RIGHT_ARROW",
-            "CURVED_UP_ARROW", "CURVED_DOWN_ARROW",
-            "STRIPED_RIGHT_ARROW", "NOTCHED_RIGHT_ARROW",
-            "BLOCK_ARC"
-        ]
+        try:
+            auto_shape_str = str(auto_shape_type).upper()
 
-        return any(arrow_type in auto_shape_type for arrow_type in arrow_types)
+            arrow_types = [
+                "LEFT_ARROW", "DOWN_ARROW", "UP_ARROW", "RIGHT_ARROW",
+                "LEFT_RIGHT_ARROW", "UP_DOWN_ARROW", "QUAD_ARROW",
+                "LEFT_RIGHT_UP_ARROW", "BENT_ARROW", "U_TURN_ARROW",
+                "CURVED_LEFT_ARROW", "CURVED_RIGHT_ARROW",
+                "CURVED_UP_ARROW", "CURVED_DOWN_ARROW",
+                "STRIPED_RIGHT_ARROW", "NOTCHED_RIGHT_ARROW",
+                "BLOCK_ARC"
+            ]
+
+            return any(arrow_type in auto_shape_str for arrow_type in arrow_types)
+        except Exception as e:
+            print(f"DEBUG: Error checking arrow shape: {e}")
+            return False
 
     def _extract_shape_hyperlink(self, shape):
         """Extract shape-level hyperlinks with URL normalization."""
