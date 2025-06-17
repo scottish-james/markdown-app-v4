@@ -1,22 +1,23 @@
 """
-Content Extractor - FIXED: Groups now work properly with accessibility order
-Updated extract_group method to avoid double-processing when accessibility extractor already expanded groups
+Content Extractor - ENHANCED: Now preserves meaningful alt text from images
+Updated to check for meaningful alt text before ignoring shapes
 """
 
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 import xml.etree.ElementTree as ET
+import re
 
 
 class ContentExtractor:
     """
     Extracts content from various PowerPoint shape types with semantic role preservation.
-    FIXED: Now properly handles group expansion to avoid double processing.
+    ENHANCED: Now checks for meaningful alt text before deciding to ignore shapes.
     """
 
     def extract_shape_content(self, shape, text_processor, accessibility_extractor=None, groups_already_expanded=False):
         """
         Main extraction router - delegates based on shape type and captures semantic role.
-        FIXED: More defensive shape type checking to avoid enum errors.
+        ENHANCED: Now checks for meaningful alt text before ignoring shapes.
 
         Args:
             groups_already_expanded: If True, skip group processing as shapes already expanded
@@ -62,10 +63,13 @@ class ContentExtractor:
             print(f"Warning: Error extracting shape content: {e}")
             return None
 
-        # Handle shapes without text content - but filter out noise
+        # Handle shapes without text content - but preserve meaningful alt text
         if not content_block:
-            # FIXED: Only create content blocks for meaningful non-text shapes
-            if self._is_meaningful_non_text_shape(shape, shape_info):
+            # NEW: Check for meaningful alt text first - this takes precedence
+            if self._has_meaningful_alt_text(shape):
+                print(f"DEBUG: Shape has meaningful alt text - extracting as image")
+                content_block = self.extract_image(shape)
+            elif self._is_meaningful_non_text_shape(shape, shape_info):
                 content_block = self._create_non_text_content_block(shape, shape_info)
             else:
                 # Skip meaningless shapes (lines, basic auto-shapes, etc.)
@@ -80,6 +84,103 @@ class ContentExtractor:
                 print(f"Warning: Error adding shape info: {e}")
 
         return content_block
+
+    def _has_meaningful_alt_text(self, shape):
+        """
+        Check if shape has meaningful alt text that's worth preserving.
+
+        MEANINGFUL ALT TEXT CRITERIA:
+        - Not empty or just whitespace
+        - Not generic like "Image", "Picture", "image1.png", etc.
+        - Not just numbers or short meaningless strings
+        - Actually describes the content
+
+        Args:
+            shape: python-pptx Shape object
+
+        Returns:
+            bool: True if shape has meaningful alt text
+        """
+        alt_text = self._extract_alt_text_from_shape(shape)
+
+        if not alt_text or not alt_text.strip():
+            return False
+
+        alt_text = alt_text.strip()
+
+        # Check for generic/meaningless alt text patterns
+        meaningless_patterns = [
+            r'^image\d*\.?(png|jpg|jpeg|gif|bmp|svg|webp)?$',  # image123.png, image.jpg, etc.
+            r'^picture\d*$',  # picture, picture1, etc.
+            r'^img\d*$',  # img, img1, etc.
+            r'^graphic\d*$',  # graphic, graphic1, etc.
+            r'^shape\d*$',  # shape, shape1, etc.
+            r'^slide\d+image\d*$',  # slide1image1, etc.
+            r'^\d+$',  # just numbers
+            r'^[a-z]{1,3}$',  # very short generic strings
+        ]
+
+        # Check against meaningless patterns (case insensitive)
+        alt_text_lower = alt_text.lower()
+        for pattern in meaningless_patterns:
+            if re.match(pattern, alt_text_lower):
+                print(f"DEBUG: Alt text '{alt_text}' matches meaningless pattern '{pattern}'")
+                return False
+
+        # Check for very short text that's likely meaningless
+        if len(alt_text) < 3:
+            print(f"DEBUG: Alt text '{alt_text}' too short to be meaningful")
+            return False
+
+        # Check for generic words that suggest auto-generated content
+        generic_words = ['image', 'picture', 'graphic', 'shape', 'photo', 'diagram']
+        if alt_text_lower in generic_words:
+            print(f"DEBUG: Alt text '{alt_text}' is generic word")
+            return False
+
+        # If we get here, it's likely meaningful
+        print(f"DEBUG: Alt text '{alt_text}' appears meaningful")
+        return True
+
+    def _extract_alt_text_from_shape(self, shape):
+        """
+        Extract alt text from shape using multiple methods.
+        This is similar to extract_image but just returns the alt text string.
+
+        Args:
+            shape: python-pptx Shape object
+
+        Returns:
+            str: Alt text or None if not found
+        """
+        try:
+            # Method 1: Direct alt_text attribute
+            if hasattr(shape, 'alt_text') and shape.alt_text:
+                return shape.alt_text.strip()
+
+            # Method 2: Image alt_text
+            if hasattr(shape, 'image') and hasattr(shape.image, 'alt_text') and shape.image.alt_text:
+                return shape.image.alt_text.strip()
+
+            # Method 3: XML extraction
+            if hasattr(shape, '_element'):
+                try:
+                    xml_str = str(shape._element.xml) if hasattr(shape._element, 'xml') else ""
+                    if xml_str:
+                        root = ET.fromstring(xml_str)
+                        for elem in root.iter():
+                            # Check description attribute
+                            if 'descr' in elem.attrib and elem.attrib['descr']:
+                                return elem.attrib['descr'].strip()
+                            # Check title attribute
+                            elif 'title' in elem.attrib and elem.attrib['title']:
+                                return elem.attrib['title'].strip()
+                except:
+                    pass
+        except:
+            pass
+
+        return None
 
     def _is_meaningful_non_text_shape(self, shape, shape_info):
         """
@@ -438,3 +539,4 @@ class ContentExtractor:
                 return f"https://{url}"
 
         return url
+
