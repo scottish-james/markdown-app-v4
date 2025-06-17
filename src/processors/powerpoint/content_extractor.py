@@ -58,48 +58,29 @@ class ContentExtractor:
 
         return content_block
 
+    # Keep all other existing methods unchanged...
     def extract_group(self, shape, text_processor, accessibility_extractor=None):
         """
-        Extract content from grouped shapes using proper internal reading order.
+        Extract content from grouped shapes using recursive processing.
+        SIMPLIFIED: Just use shape.shapes directly - the duplication issue is at slide level, not group level.
         """
         try:
             extracted_blocks = []
 
-            # Get proper reading order for group children
-            if accessibility_extractor:
-                ordered_child_shapes = accessibility_extractor.get_reading_order_of_grouped_by_shape(shape)
-            else:
-                ordered_child_shapes = list(shape.shapes)
+            # Simply iterate through the group's shapes in their default order
+            # The group's internal order is usually correct, and the duplication
+            # issue was at the slide level, not within groups
+            for child_shape in shape.shapes:
+                # Recursively extract content from each child
+                child_block = self.extract_shape_content(
+                    child_shape,
+                    text_processor,
+                    accessibility_extractor
+                )
+                if child_block:
+                    extracted_blocks.append(child_block)
 
-            # Process children in proper reading order
-            for child_shape in ordered_child_shapes:
-                content_block = None
-
-                if hasattr(child_shape, 'text_frame') and child_shape.text_frame:
-                    content_block = text_processor.extract_text_frame(child_shape.text_frame, child_shape)
-                elif hasattr(child_shape, 'text') and child_shape.text:
-                    content_block = text_processor.extract_plain_text(child_shape)
-                elif child_shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                    content_block = self.extract_image(child_shape)
-                elif child_shape.shape_type == MSO_SHAPE_TYPE.TABLE:
-                    content_block = self.extract_table(child_shape.table, text_processor)
-                elif hasattr(child_shape, 'has_chart') and child_shape.has_chart:
-                    content_block = self.extract_chart(child_shape)
-                elif child_shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-                    # Handle nested groups recursively
-                    nested_group = self.extract_group(child_shape, text_processor, accessibility_extractor)
-                    if nested_group and nested_group.get("extracted_blocks"):
-                        extracted_blocks.extend(nested_group["extracted_blocks"])
-                        continue
-
-                # Add semantic role for group children
-                if content_block and accessibility_extractor:
-                    semantic_role = accessibility_extractor._get_semantic_role_from_xml(child_shape)
-                    content_block["semantic_role"] = semantic_role
-
-                if content_block:
-                    extracted_blocks.append(content_block)
-
+            # Return group container if any content was extracted
             if extracted_blocks:
                 return {
                     "type": "group",
@@ -114,7 +95,6 @@ class ContentExtractor:
             print(f"Error extracting group: {e}")
             return None
 
-    # Keep all other existing methods unchanged...
     def extract_image(self, shape):
         """Extract image information with comprehensive alt text detection."""
         alt_text = "Image"
@@ -325,100 +305,5 @@ class ContentExtractor:
 
         return url
 
-    # Add this debug version to content_extractor.py to see what's happening
 
-    def extract_group(self, shape, text_processor, accessibility_extractor=None):
-        """
-        Extract content from grouped shapes using proper internal reading order.
-        DEBUG VERSION: Shows what order shapes are being processed.
-        """
-        try:
-            extracted_blocks = []
 
-            print(f"\n=== DEBUGGING GROUP EXTRACTION ===")
-            print(f"Group has {len(shape.shapes)} child shapes")
-
-            # Get proper reading order for group children
-            if accessibility_extractor:
-                print("🎯 Using accessibility_extractor.get_reading_order_of_grouped_by_shape()")
-                ordered_child_shapes = accessibility_extractor.get_reading_order_of_grouped_by_shape(shape)
-                print(f"Accessibility extractor returned {len(ordered_child_shapes)} ordered shapes")
-            else:
-                print("📄 No accessibility_extractor - using default shape.shapes order")
-                ordered_child_shapes = list(shape.shapes)
-
-            # Debug: Show the order we're processing shapes
-            print("\n📋 PROCESSING ORDER:")
-            for i, child_shape in enumerate(ordered_child_shapes):
-                shape_type = str(child_shape.shape_type).split('.')[-1]
-
-                # Try to get text preview
-                text_preview = ""
-                try:
-                    if hasattr(child_shape, 'text') and child_shape.text:
-                        text_preview = child_shape.text.strip()[:30] + "..."
-                    elif hasattr(child_shape, 'text_frame') and child_shape.text_frame:
-                        text_preview = child_shape.text_frame.text.strip()[:30] + "..."
-                except:
-                    text_preview = "No text"
-
-                print(f"  {i + 1}. [{shape_type}] {text_preview}")
-
-            # Process children in the order we determined
-            for i, child_shape in enumerate(ordered_child_shapes):
-                content_block = None
-
-                print(f"\n⚙️  Processing child {i + 1}...")
-
-                if hasattr(child_shape, 'text_frame') and child_shape.text_frame:
-                    content_block = text_processor.extract_text_frame(child_shape.text_frame, child_shape)
-                    print(f"   → Extracted text_frame")
-                elif hasattr(child_shape, 'text') and child_shape.text:
-                    content_block = text_processor.extract_plain_text(child_shape)
-                    print(f"   → Extracted plain text")
-                elif child_shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                    content_block = self.extract_image(child_shape)
-                    print(f"   → Extracted image")
-                elif child_shape.shape_type == MSO_SHAPE_TYPE.TABLE:
-                    content_block = self.extract_table(child_shape.table, text_processor)
-                    print(f"   → Extracted table")
-                elif hasattr(child_shape, 'has_chart') and child_shape.has_chart:
-                    content_block = self.extract_chart(child_shape)
-                    print(f"   → Extracted chart")
-                elif child_shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-                    print(f"   → Processing nested group recursively...")
-                    nested_group = self.extract_group(child_shape, text_processor, accessibility_extractor)
-                    if nested_group and nested_group.get("extracted_blocks"):
-                        extracted_blocks.extend(nested_group["extracted_blocks"])
-                        print(f"   → Flattened {len(nested_group['extracted_blocks'])} nested blocks")
-                        continue
-                else:
-                    print(f"   → Unhandled shape type: {child_shape.shape_type}")
-
-                # Add semantic role for group children
-                if content_block and accessibility_extractor:
-                    semantic_role = accessibility_extractor._get_semantic_role_from_xml(child_shape)
-                    content_block["semantic_role"] = semantic_role
-                    print(f"   → Added semantic_role: {semantic_role}")
-
-                if content_block:
-                    extracted_blocks.append(content_block)
-                    print(f"   → Added to extracted_blocks")
-                else:
-                    print(f"   → No content block generated")
-
-            print(f"\n✅ GROUP EXTRACTION COMPLETE: {len(extracted_blocks)} blocks extracted")
-
-            if extracted_blocks:
-                return {
-                    "type": "group",
-                    "extracted_blocks": extracted_blocks,
-                    "hyperlink": self._extract_shape_hyperlink(shape),
-                    "semantic_role": "group"
-                }
-
-            return None
-
-        except Exception as e:
-            print(f"❌ Error extracting group: {e}")
-            return None
