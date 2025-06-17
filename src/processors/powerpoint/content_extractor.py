@@ -1,6 +1,6 @@
 """
-Content Extractor - FIXED: Groups now use proper reading order
-Updated extract_group method to use AccessibilityOrderExtractor for group children
+Content Extractor - FIXED: Groups now work properly with accessibility order
+Updated extract_group method to avoid double-processing when accessibility extractor already expanded groups
 """
 
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -10,11 +10,15 @@ import xml.etree.ElementTree as ET
 class ContentExtractor:
     """
     Extracts content from various PowerPoint shape types with semantic role preservation.
+    FIXED: Now properly handles group expansion to avoid double processing.
     """
 
-    def extract_shape_content(self, shape, text_processor, accessibility_extractor=None):
+    def extract_shape_content(self, shape, text_processor, accessibility_extractor=None, groups_already_expanded=False):
         """
         Main extraction router - delegates based on shape type and captures semantic role.
+
+        Args:
+            groups_already_expanded: If True, skip group processing as shapes already expanded
         """
         # Capture basic shape info for diagram analysis
         shape_info = self._get_shape_analysis_info(shape)
@@ -35,7 +39,13 @@ class ContentExtractor:
             elif hasattr(shape, 'has_chart') and shape.has_chart:
                 content_block = self.extract_chart(shape)
             elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-                content_block = self.extract_group(shape, text_processor, accessibility_extractor)
+                # CRITICAL FIX: Only process groups if they haven't been expanded already
+                if not groups_already_expanded:
+                    content_block = self.extract_group(shape, text_processor, accessibility_extractor)
+                else:
+                    # Groups already expanded by accessibility extractor - skip to avoid double processing
+                    print(f"DEBUG: Skipping group '{getattr(shape, 'name', 'unnamed')}' - already expanded")
+                    return None
             elif hasattr(shape, 'text_frame') and shape.text_frame:
                 content_block = text_processor.extract_text_frame(shape.text_frame, shape)
             elif hasattr(shape, 'text') and shape.text:
@@ -58,30 +68,40 @@ class ContentExtractor:
 
         return content_block
 
-    # Keep all other existing methods unchanged...
     def extract_group(self, shape, text_processor, accessibility_extractor=None):
         """
-        Extract content from grouped shapes using recursive processing.
-        SIMPLIFIED: Just use shape.shapes directly - the duplication issue is at slide level, not group level.
+        Extract content from grouped shapes using proper ordering.
+        Only called when groups haven't been pre-expanded by accessibility extractor.
         """
         try:
             extracted_blocks = []
 
-            # Simply iterate through the group's shapes in their default order
-            # The group's internal order is usually correct, and the duplication
-            # issue was at the slide level, not within groups
-            for child_shape in shape.shapes:
+            # Use accessibility extractor for proper ordering if available
+            if accessibility_extractor:
+                print(f"DEBUG: Using accessibility extractor for group '{getattr(shape, 'name', 'unnamed')}' ordering")
+                ordered_children = accessibility_extractor.get_reading_order_of_grouped_by_shape(shape)
+            else:
+                print(f"DEBUG: No accessibility extractor - using default group order")
+                ordered_children = list(shape.shapes)
+
+            print(f"DEBUG: Group has {len(ordered_children)} children")
+
+            # Process each child shape
+            for child_shape in ordered_children:
                 # Recursively extract content from each child
                 child_block = self.extract_shape_content(
                     child_shape,
                     text_processor,
-                    accessibility_extractor
+                    accessibility_extractor,
+                    groups_already_expanded=False  # Child shapes not pre-expanded
                 )
                 if child_block:
                     extracted_blocks.append(child_block)
 
             # Return group container if any content was extracted
             if extracted_blocks:
+                print(
+                    f"DEBUG: Group '{getattr(shape, 'name', 'unnamed')}' produced {len(extracted_blocks)} content blocks")
                 return {
                     "type": "group",
                     "extracted_blocks": extracted_blocks,
@@ -89,6 +109,7 @@ class ContentExtractor:
                     "semantic_role": "group"
                 }
 
+            print(f"DEBUG: Group '{getattr(shape, 'name', 'unnamed')}' produced no content")
             return None
 
         except Exception as e:
@@ -304,6 +325,3 @@ class ContentExtractor:
                 return f"https://{url}"
 
         return url
-
-
-

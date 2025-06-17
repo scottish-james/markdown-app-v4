@@ -1,7 +1,6 @@
 """
-PowerPoint Processor - Updated to pass semantic role information through the pipeline
-Now ensures that XML-based title detection flows from AccessibilityOrderExtractor
-through ContentExtractor to MarkdownConverter properly.
+PowerPoint Processor - FIXED: Now properly handles group expansion
+Updated to tell content_extractor when groups have already been expanded by accessibility_extractor
 """
 
 from pptx import Presentation
@@ -20,7 +19,7 @@ from .metadata_extractor import MetadataExtractor
 class PowerPointProcessor:
     """
     Main PowerPoint processor implementing dual-strategy processing architecture
-    with proper semantic role information flow.
+    with proper semantic role information flow and group handling.
     """
 
     def __init__(self, use_accessibility_order=True):
@@ -84,7 +83,6 @@ class PowerPointProcessor:
         structured_data = self.extract_presentation_data(prs)
 
         # Convert structured data to clean markdown with semantic role awareness
-        # NOTE: convert_slide_titles now ignored - XML semantic roles control this
         markdown = self.markdown_converter.convert_structured_data_to_markdown(
             structured_data, convert_slide_titles=False  # XML controls titles now
         )
@@ -139,10 +137,9 @@ class PowerPointProcessor:
     def extract_slide_data(self, slide, slide_number):
         """
         Extract content from individual slide using coordinated component pipeline.
-        UPDATED: Now passes accessibility_extractor to content_extractor for semantic role capture.
+        CRITICAL FIX: Now properly handles group expansion to avoid double processing.
         """
         # Get shapes in proper reading order using AccessibilityOrderExtractor
-        # This already puts titles first based on semantic XML analysis
         ordered_shapes = self.accessibility_extractor.get_slide_reading_order(slide, slide_number)
 
         slide_data = {
@@ -151,17 +148,25 @@ class PowerPointProcessor:
             "extraction_method": self.accessibility_extractor.get_last_extraction_method()
         }
 
+        # CRITICAL: Check if groups were expanded by checking extraction method
+        # Version 2 uses "semantic_accessibility_order" and DOES expand groups at slide level
+        groups_were_expanded = self.accessibility_extractor.get_last_extraction_method() == "semantic_accessibility_order"
+
+        print(f"DEBUG: Slide {slide_number} - Groups expanded: {groups_were_expanded}")
+        print(f"DEBUG: Processing {len(ordered_shapes)} shapes")
+
         # Extract content from each shape using ContentExtractor + TextProcessor
-        # CRITICAL: Pass accessibility_extractor so semantic roles are captured
         for shape in ordered_shapes:
             block = self.content_extractor.extract_shape_content(
                 shape,
                 self.text_processor,
-                self.accessibility_extractor  # NEW: Pass this for semantic role detection
+                self.accessibility_extractor,
+                groups_already_expanded=groups_were_expanded  # CRITICAL FIX: Tell content extractor about expansion
             )
             if block:
                 slide_data["content_blocks"].append(block)
 
+        print(f"DEBUG: Slide {slide_number} produced {len(slide_data['content_blocks'])} content blocks")
         return slide_data
 
     def debug_accessibility_order(self, file_path, slide_number=1):
@@ -181,16 +186,20 @@ class PowerPointProcessor:
             print(f"🎯 XML available - debugging sophisticated processing with semantic roles...")
 
             print(f"\n=== DEBUGGING SLIDE {slide_number} READING ORDER WITH SEMANTIC ROLES ===")
-            print(f"Total shapes: {len(slide.shapes)}")
+            print(f"Total shapes on slide: {len(slide.shapes)}")
 
             # Test and report accessibility extraction results
             ordered_shapes = self.accessibility_extractor.get_slide_reading_order(slide, slide_number)
-            print(f"✅ Extraction method: {self.accessibility_extractor.get_last_extraction_method()}")
-            print(f"✅ Ordered shapes: {len(ordered_shapes)}")
+            extraction_method = self.accessibility_extractor.get_last_extraction_method()
+            print(f"✅ Extraction method: {extraction_method}")
+            print(f"✅ Ordered shapes after processing: {len(ordered_shapes)}")
+
+            groups_expanded = extraction_method == "semantic_accessibility_order"
+            print(f"✅ Groups were expanded: {groups_expanded}")
 
             # Show shape information with semantic roles
             print("\n🎯 SHAPE ORDER WITH SEMANTIC ROLES:")
-            for i, shape in enumerate(ordered_shapes[:5]):  # Show first 5 shapes only
+            for i, shape in enumerate(ordered_shapes):
                 shape_type = str(shape.shape_type).split('.')[-1]
                 semantic_role = self.accessibility_extractor._get_semantic_role_from_xml(shape)
 
@@ -205,8 +214,29 @@ class PowerPointProcessor:
 
                 print(f"  {i + 1}. [{shape_type}] SEMANTIC_ROLE: {semantic_role} | {text_preview}")
 
+            # Test content extraction
+            print(f"\n🎯 TESTING CONTENT EXTRACTION:")
+            slide_data = self.extract_slide_data(slide, slide_number)
+            print(f"✅ Content blocks extracted: {len(slide_data['content_blocks'])}")
+
+            for i, block in enumerate(slide_data['content_blocks']):
+                block_type = block.get('type', 'unknown')
+                semantic_role = block.get('semantic_role', 'unknown')
+
+                if block_type == 'text' and block.get('paragraphs'):
+                    text_preview = block['paragraphs'][0].get('clean_text', '')[:40] + "..."
+                elif block_type == 'group':
+                    child_count = len(block.get('extracted_blocks', []))
+                    text_preview = f"Group with {child_count} children"
+                else:
+                    text_preview = f"{block_type} content"
+
+                print(f"  {i + 1}. [{block_type}] SEMANTIC: {semantic_role} | {text_preview}")
+
         except Exception as e:
             print(f"Debug failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def get_processing_summary(self, file_path):
         """Get comprehensive processing summary without performing full conversion."""
@@ -226,7 +256,7 @@ class PowerPointProcessor:
                     "slide_count": len(prs.slides),
                     "extraction_method": "accessibility_order_with_semantic_roles" if self.use_accessibility_order else "positional",
                     "has_diagram_analysis": True,
-                    "has_semantic_title_detection": True,  # NEW: XML-based title detection
+                    "has_semantic_title_detection": True,
                     "slides_preview": []
                 })
 
@@ -316,4 +346,3 @@ def process_powerpoint_file(file_path, output_format="markdown", convert_slide_t
                 pass
 
         return result
-
