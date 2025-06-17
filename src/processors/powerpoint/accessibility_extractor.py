@@ -132,7 +132,7 @@ class AccessibilityOrderExtractor:
         result = title_shapes + subtitle_shapes + content_shapes + other_shapes
         print(f"DEBUG: Final semantic order: {len(result)} shapes")
 
-        return result
+        return deduplicated_shapes
 
     def _get_xml_document_order_deduplicated(self, slide):
         """
