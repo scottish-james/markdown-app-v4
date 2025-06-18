@@ -324,7 +324,7 @@ def _display_screenshot_result_from_session(slide_num: int):
     with col1:
         # Display thumbnail using stored image data
         try:
-            st.image(result_data['image_data'], caption=f"Slide {slide_num}", width=250)
+            st.image(result_data['image_data'], caption=f"Slide {slide_num}")  # Full resolution
         except Exception as e:
             st.error(f"Error displaying image: {str(e)}")
 

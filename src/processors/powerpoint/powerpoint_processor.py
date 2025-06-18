@@ -92,10 +92,17 @@ class PowerPointProcessor:
             markdown, pptx_metadata
         )
 
-        # Add diagram analysis results if diagrams detected
-        diagram_analysis = self.diagram_analyzer.analyze_structured_data_for_diagrams(structured_data)
+            # ENHANCED: Use direct slide analysis for comprehensive diagram detection
+        print("🎯 Running enhanced diagram analysis with direct slide access...")
+        diagram_analysis = self.diagram_analyzer.analyze_slides_for_diagrams(
+            slides=list(prs.slides),  # Pass raw slides for comprehensive analysis
+            structured_data=structured_data  # Fallback if needed
+        )
         if diagram_analysis:
+            print("✅ Enhanced diagram analysis found potential diagrams")
             markdown_with_metadata += "\n\n" + diagram_analysis
+        else:
+            print("❌ Enhanced diagram analysis found no diagrams")
 
         return markdown_with_metadata
 
@@ -349,6 +356,161 @@ class PowerPointProcessor:
         self.use_accessibility_order = use_accessibility_order
         self.accessibility_extractor.use_accessibility_order = use_accessibility_order
 
+    def debug_shape_extraction(self, file_path, slide_number=15):
+        """
+        Debug method to see exactly what shapes are being found and why lines/arrows aren't detected.
+        """
+        try:
+            print(f"\n{'=' * 70}")
+            print(f"🔍 DEBUGGING SHAPE EXTRACTION - SLIDE {slide_number}")
+            print(f"{'=' * 70}")
+
+            if not self._has_xml_access(file_path):
+                print(f"❌ XML not available for {file_path}")
+                return
+
+            prs = Presentation(file_path)
+            if slide_number > len(prs.slides):
+                print(f"❌ Slide {slide_number} not found. Presentation has {len(prs.slides)} slides.")
+                return
+
+            slide = prs.slides[slide_number - 1]
+            print(f"📊 Slide {slide_number} has {len(slide.shapes)} shapes")
+
+            # Step 1: Show all shapes on the slide with their types
+            print(f"\n--- STEP 1: ALL SHAPES ON SLIDE ---")
+            for i, shape in enumerate(slide.shapes):
+                try:
+                    shape_type = shape.shape_type
+                    shape_type_name = str(shape_type).split('.')[-1] if hasattr(shape_type, '__str__') else 'unknown'
+
+                    # Get shape name
+                    shape_name = getattr(shape, 'name', 'unnamed')
+
+                    # Try to get text
+                    text_preview = ""
+                    try:
+                        if hasattr(shape, 'text') and shape.text:
+                            text_preview = shape.text.strip()[:30]
+                        elif hasattr(shape, 'text_frame') and shape.text_frame:
+                            text_preview = shape.text_frame.text.strip()[:30]
+                    except:
+                        text_preview = "No text"
+
+                    print(f"  {i + 1}. Type: {shape_type_name}, Name: '{shape_name}', Text: '{text_preview}'")
+
+                    # Special handling for AUTO_SHAPE to check if it's an arrow
+                    if shape_type_name == 'AUTO_SHAPE':
+                        try:
+                            auto_shape_type = getattr(shape, 'auto_shape_type', None)
+                            if auto_shape_type:
+                                auto_type_str = str(auto_shape_type).split('.')[-1]
+                                print(f"      -> AUTO_SHAPE type: {auto_type_str}")
+
+                                # Test arrow detection
+                                is_arrow = self._is_arrow_shape(auto_type_str)
+                                print(f"      -> Is arrow: {is_arrow}")
+
+                        except Exception as e:
+                            print(f"      -> Error getting auto_shape_type: {e}")
+
+                except Exception as e:
+                    print(f"  {i + 1}. ERROR: {e}")
+
+            # Step 2: Test the enhanced extraction process
+            print(f"\n--- STEP 2: ENHANCED EXTRACTION PROCESS ---")
+
+            # Get all shapes including group expansion
+            all_shapes = self.diagram_analyzer._get_all_shapes_including_groups(slide)
+            print(f"After group expansion: {len(all_shapes)} shapes")
+
+            # Create content blocks and categorize
+            content_blocks = []
+            lines_found = []
+            arrows_found = []
+            shapes_found = []
+
+            for i, shape in enumerate(all_shapes):
+                print(f"\nProcessing shape {i + 1}/{len(all_shapes)}:")
+                try:
+                    shape_type = shape.shape_type
+                    shape_type_name = str(shape_type).split('.')[-1] if hasattr(shape_type, '__str__') else 'unknown'
+                    print(f"  Type: {shape_type_name}")
+
+                    # Test the diagram type determination
+                    diagram_type = self.diagram_analyzer._determine_diagram_type(shape, shape_type_name)
+                    print(f"  Determined diagram type: {diagram_type}")
+
+                    # Create content block
+                    content_block = self.diagram_analyzer._create_diagram_content_block(shape)
+                    if content_block:
+                        content_blocks.append(content_block)
+                        print(f"  ✅ Content block created: {content_block.get('type', 'unknown')}")
+
+                        # Categorize for analysis
+                        block_type = content_block.get('type')
+                        if block_type == 'line':
+                            lines_found.append(content_block)
+                        elif block_type == 'arrow':
+                            arrows_found.append(content_block)
+                        else:
+                            shapes_found.append(content_block)
+                    else:
+                        print(f"  ❌ No content block created")
+
+                except Exception as e:
+                    print(f"  ❌ Error processing shape: {e}")
+
+            print(f"\n--- STEP 3: CATEGORIZATION RESULTS ---")
+            print(f"Total content blocks created: {len(content_blocks)}")
+            print(f"Lines found: {len(lines_found)}")
+            print(f"Arrows found: {len(arrows_found)}")
+            print(f"Other shapes: {len(shapes_found)}")
+
+            # Show what we found
+            if lines_found:
+                print(f"\nLINES DETECTED:")
+                for i, line in enumerate(lines_found):
+                    print(f"  {i + 1}. {line}")
+
+            if arrows_found:
+                print(f"\nARROWS DETECTED:")
+                for i, arrow in enumerate(arrows_found):
+                    print(f"  {i + 1}. {arrow}")
+
+            if not lines_found and not arrows_found:
+                print(f"\n❌ NO LINES OR ARROWS DETECTED!")
+                print(f"This explains why all slides are getting 40% - missing the 20 points each for lines/arrows")
+
+            # Step 4: Test the complete analysis
+            print(f"\n--- STEP 4: COMPLETE DIAGRAM ANALYSIS ---")
+            slide_data = {"content_blocks": content_blocks}
+            score_analysis = self.diagram_analyzer.score_slide_for_diagram(slide_data)
+
+            print(f"Final analysis:")
+            print(f"  Score: {score_analysis['total_score']}")
+            print(f"  Probability: {score_analysis['probability']}%")
+            print(f"  Reasons: {score_analysis['reasons']}")
+            print(f"  Shape count: {score_analysis['shape_count']}")
+            print(f"  Line count: {score_analysis['line_count']}")
+            print(f"  Arrow count: {score_analysis['arrow_count']}")
+
+            return {
+                "total_shapes_on_slide": len(slide.shapes),
+                "shapes_after_expansion": len(all_shapes),
+                "content_blocks_created": len(content_blocks),
+                "lines_detected": len(lines_found),
+                "arrows_detected": len(arrows_found),
+                "final_score": score_analysis['total_score'],
+                "final_probability": score_analysis['probability']
+            }
+
+        except Exception as e:
+            print(f"❌ Debug failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
 
 # Convenience functions for backward compatibility and simple usage
 def convert_pptx_to_markdown_enhanced(file_path, convert_slide_titles=True):
@@ -387,3 +549,5 @@ def process_powerpoint_file(file_path, output_format="markdown", convert_slide_t
                 pass
 
         return result
+
+

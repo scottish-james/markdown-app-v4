@@ -381,9 +381,6 @@ class AccessibilityOrderExtractor:
 
         return "other"
 
-    # [Include all the other helper methods - truncated for brevity]
-    # ... (all the other existing methods from the original class)
-
     def _get_slide_xml(self, slide):
         """Extract raw XML from slide with multiple access pattern attempts."""
         try:
